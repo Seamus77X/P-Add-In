@@ -749,6 +749,8 @@
                     "RowInserted",  // change type
                     r,              // relative row num in the table
                     rangeAddress,   // range address in the sheet
+                    changesTracker[0],   // change type
+                    ""
                 ])
             }
         }
@@ -769,6 +771,8 @@
                 "RowDeleted",  // change type
                 r,              // relative row num in the table
                 rangeAddress,   // range address in the sheet
+                changesTracker[0],   // change type
+                ""
             ])
         }
     }
@@ -777,7 +781,7 @@
         try {
             if (undo_redo = true) { undo_redo = undefined }
             if (changesTracker[1][0] === "Fulfilled") { changesTracker = [[], []] }
-            changesTracker[0].push("B")
+            changesTracker[0] += "B"
 
             let thisTableChangeType = eventArgs.changeType
             Excel.run(function (ctx) {
@@ -792,10 +796,10 @@
                 return ctx.sync().then(async function () {
                     changesTracker[1][0] = "Fulfilled"
 
-                    if (undo_redo === true && JSON.stringify(changesTracker[0]) === JSON.stringify(["A", "B"])) {
+                    if (undo_redo === true && changesTracker[0] === "AB") {
                         // stop the AB case for redo row deletion
                         return
-                    } else if (undo_redo === true && JSON.stringify(changesTracker[0]) === JSON.stringify(["A", "B", "A"])) {
+                    } else if (undo_redo === true && changesTracker[0] === "ABA") {
                         // allow the ABA case for undoing and redoing row addition
                     }
 
@@ -863,9 +867,9 @@
                     }
 
                     if (myTables[table.name].length < tableRange.rowCount && thisTableChangeType === "RangeEdited") {
-                        if (JSON.stringify(changesTracker[0]) === JSON.stringify(["B", "A", "B"])) {
+                        if (changesTracker[0] === "BAB") {
                             // allow BAB case for normal row addition
-                        } else if (JSON.stringify(changesTracker[0]) === JSON.stringify(["B", "A"])) {
+                        } else if (changesTracker[0] === "BA") {
                             // stop the BA case for undoing row deletion
                             return
                         }
@@ -879,7 +883,7 @@
                                 break;
                             } else {
                                 // clean redo if new change
-                                if (JSON.stringify(changesTracker[0]) !== JSON.stringify(["A", "B", "A"])) {
+                                if (changesTracker[0] !== "ABA") {
                                     rowChangeHistory_Redo = []
                                 }
 
@@ -887,6 +891,7 @@
                                 break;
                             }
                         case "RowInserted":
+                            rowChange = []
                             await rowInsertedHandler(startRangeRowRelative, endRangeRowRelative, startRangeColRelative, endRangeColRelative, table.name, tableData, range.address.split("!")[1])
                             rowChangeHistory_Undo.push(rowChange)
                             rowChange = []
@@ -896,6 +901,7 @@
                             console.log(`Row Inserted: [${eventArgs.address}] in '${table.name}' table.`)
                             break;
                         case "RowDeleted":
+                            rowChange = []
                             await rowDeletedHandler(startRangeRowRelative, endRangeRowRelative, table.name, range.address.split("!")[1])
                             rowChangeHistory_Undo.push(rowChange)
                             rowChange = []
@@ -933,7 +939,7 @@
         try {
             if (undo_redo = true) { undo_redo = undefined }
             if (changesTracker[1][0] === "Fulfilled") { changesTracker = [[], []] }
-            changesTracker[0].push("A")
+            changesTracker[0] += "A"
 
             Excel.run(function (ctx) {
                 let table = ctx.workbook.tables.getItem(tableID);
@@ -950,8 +956,7 @@
                         // stop the BBA case for normal row addition
                         return
                     } else if (myTables[table.name].length < tableRange.rowCount &&
-                        (JSON.stringify(changesTracker[0]) === JSON.stringify(["B", "A", "B"]) ||
-                            JSON.stringify(changesTracker[0]) === JSON.stringify(["A", "B"]))) {
+                            (changesTracker[0] === "BAB" || changesTracker[0] === "AB")) {
                         // stop the BAB and AB case for normal row addition;
                         return
                     }
@@ -966,27 +971,38 @@
                         let previousRowChangeType
                         let previousRowAddress
                         let previousRowsCount
+                        let previousChangeTracker_normal
                         if (rowChangeHistory_Undo.length > 0) {
                             previousRowChangeType = rowChangeHistory_Undo.at(-1)[0][0]
                             previousRowAddress = rowChangeHistory_Undo.at(-1)[0][2]
                             previousRowsCount = previousRowChangeType === "RowInserted" ? - rowChangeHistory_Undo.at(-1).length : + rowChangeHistory_Undo.at(-1).length
+                            previousChangeTracker_normal = rowChangeHistory_Undo.at(-1)[0][3]
                         }
 
                         let nextRowChangeType
                         let nextRowAddress
                         let nextRowsCount
+                        let nextChangeTracker_undo
                         if (rowChangeHistory_Redo.length > 0) {
                             nextRowChangeType = rowChangeHistory_Redo.at(-1)[0][0]
                             nextRowAddress = rowChangeHistory_Redo.at(-1)[0][2]
                             nextRowsCount = nextRowChangeType === "RowInserted" ? + rowChangeHistory_Redo.at(-1).length : - rowChangeHistory_Redo.at(-1).length
+                            nextChangeTracker_undo = rowChangeHistory_Redo.at(-1)[0][4]
                         }
 
-                        // if change type = A and rowsCount are same
+                        // stop undo and redo similarity issue
                         let rowsGap = tableRange.rowCount - myTables[table.name].length
                         let advancedEvidence
-                        if (JSON.stringify(changesTracker[0]) === JSON.stringify(["A"])) {
+                        if (changesTracker[0] === "A") {
                             if (previousRowsCount === nextRowsCount) {
-                                // kill the redo list
+                                if (nextChangeTracker_undo !== "A") {
+                                    advancedEvidence = "Redo"
+                                } else if (!(previousChangeTracker_normal === "B" || previousChangeTracker_normal === "BBA")) {
+                                    advancedEvidence = "Undo"
+                                } else {
+                                    errorHandler("Cannot distinguish between redo and undo")
+                                }
+                                
                             } else if (previousRowsCount === rowsGap) {
                                 advancedEvidence = "Undo"
                             } else if (nextRowsCount === rowsGap) {
@@ -997,7 +1013,7 @@
                         if (myTables[table.name].length < tableRange.rowCount) {
                             undo_redo = true
                             if (previousRowChangeType === "RowDeleted"
-                                && JSON.stringify(changesTracker[0]) === JSON.stringify(["B", "A"])
+                                && changesTracker[0] === "BA"
                                 || advancedEvidence === "Undo") {
                                 // undo row deletion
                                 startRangeRowRelative_history = rowChangeHistory_Undo.at(-1).at(-1)[1]
@@ -1007,11 +1023,12 @@
 
                                 rowInsertedHandler(startRangeRowRelative_history, endRangeRowRelative_history, startRangeColRelative_history, endRangeColRelative_history, table.name, tableRange.values)
                                 rowChangeHistory_Redo.push(rowChangeHistory_Undo.pop()) // add this rowAdded history // delete previous rowDeleted history
+                                rowChangeHistory_Redo.at(-1)[0][4] = changesTracker[0]
                                 rowChange = []
 
                                 console.log(`Undo Row Deletion: [${previousRowAddress}] in '${table.name}' table.`)
                             } else if (nextRowChangeType === "RowInserted"
-                                && (JSON.stringify(changesTracker[0]) === JSON.stringify(["A", "A"]) || JSON.stringify(changesTracker[0]) === JSON.stringify(["A", "B", "A"]))
+                                && (changesTracker[0] === "AA" || changesTracker[0] === "ABA")
                                 || advancedEvidence === "Redo") {
                                 // redo row addition
                                 startRangeRowRelative_history = rowChangeHistory_Redo.at(-1)[0][1]
@@ -1028,7 +1045,7 @@
                         } else if (myTables[table.name].length > tableRange.rowCount) {
                             undo_redo = true
                             if (previousRowChangeType === "RowInserted"
-                                && (JSON.stringify(changesTracker[0]) === JSON.stringify(["A", "A"]) || JSON.stringify(changesTracker[0]) === JSON.stringify(["A", "B", "A"]))
+                                && (changesTracker[0] === "AA" || changesTracker[0] === "ABA")
                                 || advancedEvidence === "Undo") {
                                 // undo row addition
                                 startRangeRowRelative_history = rowChangeHistory_Undo.at(-1)[0][1]
@@ -1036,11 +1053,12 @@
 
                                 rowDeletedHandler(startRangeRowRelative_history, endRangeRowRelative_history, table.name)
                                 rowChangeHistory_Redo.push(rowChangeHistory_Undo.pop()) // delete previous rowAdded history // add this rowDeleted history
+                                rowChangeHistory_Redo.at(-1)[0][4] = changesTracker[0]
                                 rowChange = []
 
                                 console.log(`Undo Row Addition: [${previousRowAddress}] in '${table.name}' table.`)
                             } else if (nextRowChangeType === "RowDeleted"
-                                && JSON.stringify(changesTracker[0]) === JSON.stringify(["A", "B"])
+                                && changesTracker[0] === "AB"
                                 || advancedEvidence === "Redo") {
                                 // redo row deletion
                                 startRangeRowRelative_history = rowChangeHistory_Redo.at(-1).at(-1)[1]
@@ -1051,6 +1069,28 @@
                                 rowChange = []
 
                                 console.log(`Redo Row Deletion: [${nextRowAddress}] in '${table.name}' table.`)
+                            }
+                        }
+
+                        // stop the redo and undo similarity issue
+                        if (rowChangeHistory_Undo.length > 0) {
+                            previousRowChangeType = rowChangeHistory_Undo.at(-1)[0][0]
+                            previousChangeTracker_normal = rowChangeHistory_Undo.at(-1)[0][3]
+                            previousRowsCount = previousRowChangeType === "RowInserted" ? - rowChangeHistory_Undo.at(-1).length : + rowChangeHistory_Undo.at(-1).length
+                        }
+                        if (rowChangeHistory_Redo.length > 0) {
+                            nextRowChangeType = rowChangeHistory_Redo.at(-1)[0][0]
+                            nextChangeTracker_undo = rowChangeHistory_Redo.at(-1)[0][4]
+                            nextRowsCount = nextRowChangeType === "RowInserted" ? + rowChangeHistory_Redo.at(-1).length : - rowChangeHistory_Redo.at(-1).length
+                        }
+                        
+                        if (previousRowsCount === nextRowsCount) {
+                            if (nextChangeTracker_undo === "A"
+                                && (previousChangeTracker_normal === "B" || previousChangeTracker_normal === "BBA")
+                            ) {
+                                rowChangeHistory_Redo = []
+                                ctx.workbook.worksheets.getActiveWorksheet().getRange("XFD1048576").values = null
+                                ctx.sync()
                             }
                         }
                     }
