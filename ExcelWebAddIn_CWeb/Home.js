@@ -112,10 +112,6 @@
     Office.actions.associate("buttonFunction", function (event) {
         console.log('Hey, you just pressed a ribbon button.')
 
-        console.log("Undo List")
-        console.log(rowChangeHistory_Undo)
-        console.log("Redo List")
-        console.log(rowChangeHistory_Redo)
         event.completed();
     })
 
@@ -321,10 +317,6 @@
             toggleEventListener(true)
             // add listener to the table if no listener
             registerTableChangeEvent(tableName)
-
-            // clearn redo and undo lists when refreshing
-            rowChangeHistory_Undo = []
-            rowChangeHistory_Redo = []
         }
     }
 
@@ -715,10 +707,8 @@
 
     let guidPromise
     let undo_redo
+    let previousTableData
     let changesTracker = [[], []]
-    let rowChangeHistory_Undo = []
-    let rowChangeHistory_Redo = []
-    let rowChange = []
     // row change events handlers
     function rowInsertedHandler(startRow, endRow, startCol, endCol, tableName, tableData, rangeAddress) {
         for (let r = startRow; r <= endRow; r++) {
@@ -735,23 +725,15 @@
             if (Object.keys(jsonPayLoad).length > 0) {
                 // add the row in memory table as well
                 if (r + 1 > myTables[tableName].length) {
-                    myTables[tableName].push([Date.now(), "waiting for guid"])
+                    myTables[tableName].push(["", "waiting for guid"])
                 } else {
-                    myTables[tableName].splice(r, 0, [Date.now(), "waiting for guid"])
+                    myTables[tableName].splice(r, 0, ["", "waiting for guid"])
                 }
                 // Add in P+ table
                 (async function () {
                     guidPromise = Create_D365(tableName, jsonPayLoad, "sensei_lessonlearnedid");
                     myTables[tableName][r][1] = await guidPromise
                 })()
-                // keep a record in rowHistory array
-                rowChange.push([
-                    "RowInserted",  // change type
-                    r,              // relative row num in the table
-                    rangeAddress,   // range address in the sheet
-                    changesTracker[0],   // change type
-                    ""
-                ])
             }
         }
     }
@@ -766,17 +748,10 @@
             Delete_D365(tableName, myTables[tableName][r][guidColNum])
             // delete the row in memeory table as well
             myTables[tableName].splice(r, 1)
-            // keep a record in rowHistory array
-            rowChange.push([
-                "RowDeleted",  // change type
-                r,              // relative row num in the table
-                rangeAddress,   // range address in the sheet
-                changesTracker[0],   // change type
-                ""
-            ])
         }
     }
-    // hanle table change.    tip: get after value from Excel if multiple range changes
+
+    // hanle table change.
     function handleTableChange(eventArgs) {
         try {
             if (undo_redo = true) { undo_redo = undefined }
@@ -784,17 +759,28 @@
             changesTracker[0] += "B"
 
             let thisTableChangeType = eventArgs.changeType
-            Excel.run(function (ctx) {
-                // get the Range changed and the table changed
-                let range = ctx.workbook.worksheets.getActiveWorksheet().getRange(eventArgs.address)
-                range.load("values, address, rowIndex, columnIndex, cellCount, rowCount, columnCount")
+            Excel.run( (ctx) => {
+                // load necessary info from Excel
+                let range
+                let isDiscontinuousRanges
+                if (eventArgs.address.includes(",")) {
+                    range = ctx.workbook.worksheets.getActiveWorksheet().getRanges(eventArgs.address).areas
+                    range.load("items/values, items/address, items/rowIndex, items/columnIndex, items/cellCount, items/rowCount, items/columnCount")
+                    isDiscontinuousRanges= true
+                } else {
+                    range = ctx.workbook.worksheets.getActiveWorksheet().getRange(eventArgs.address)
+                    range.load("values, address, rowIndex, columnIndex, cellCount, rowCount, columnCount")
+                    isDiscontinuousRanges = false
+                }
+                
                 let table = ctx.workbook.tables.getItem(eventArgs.tableId);
                 table.load("name")
                 let tableRange = table.getRange()
-                tableRange.load("rowIndex, columnIndex, rowCount,columnCount, values")
+                tableRange.load("rowIndex, columnIndex, rowCount, columnCount, values")
 
-                return ctx.sync().then(async function () {
+                return ctx.sync().then( () => {
                     changesTracker[1][0] = "Fulfilled"
+                    previousTableData = tableRange.values // update the previous data
 
                     if (undo_redo === true && changesTracker[0] === "AB") {
                         // stop the AB case for redo row deletion
@@ -807,11 +793,26 @@
                     let tableStartRow = tableRange.rowIndex;
                     let tableStartCol = tableRange.columnIndex;
 
-                    let startRangeRowRelative = range.rowIndex - tableStartRow;
-                    let startRangeColRelative = range.columnIndex - tableStartCol;
+                    let startRangeRowRelative
+                    let startRangeColRelative
+                    let endRangeRowRelative
+                    let endRangeColRelative
+                    let startRangeRowRelative_Coll
+                    let startRangeColRelative_Coll
+                    let endRangeRowRelative_Coll
+                    let endRangeColRelative_Coll
 
-                    let endRangeRowRelative = startRangeRowRelative + range.rowCount - 1
-                    let endRangeColRelative = startRangeColRelative + range.columnCount - 1
+                    if (isDiscontinuousRanges) {
+                        startRangeRowRelative_Coll = range.items.map(item => item.rowIndex - tableStartRow)
+                        startRangeColRelative_Coll = range.items.map(item => item.columnIndex - tableStartCol)
+                        endRangeRowRelative_Coll = range.items.map(item => item.rowIndex - tableStartRow + item.rowCount - 1)
+                        endRangeColRelative_Coll = range.items.map(item => item.columnIndex - tableStartCol + item.columnCount - 1)
+                    } else {
+                        startRangeRowRelative = range.rowIndex - tableStartRow;
+                        startRangeColRelative = range.columnIndex - tableStartCol;
+                        endRangeRowRelative = startRangeRowRelative + range.rowCount - 1
+                        endRangeColRelative = startRangeColRelative + range.columnCount - 1
+                    }
 
                     // range content change event handler
                     async function rangeChangeHandler(startRow, endRow, startCol, endCol) {
@@ -820,11 +821,6 @@
                         let guidColl = []
 
                         for (let r = startRow; r <= endRow; r++) {
-                            // if this is triggered by adding new rows from bottom
-                            if (Date.now() - myTables[table.name][r][0] <= 10) {
-                                return "ignore this"
-                            }
-
                             let jsonPayLoad = {}
                             for (let c = startCol; c <= endCol; c++) {
                                 let displayColName = tableData[0][c]
@@ -846,23 +842,15 @@
 
                         // start syncing by sending http request to D365 API
                         if (guidColl.length > 0) {
-                            if (range.cellCount === 1) {
-                                if (eventArgs.details !== undefined) {
-                                    if (JSON.stringify(eventArgs.details.valueAsJsonAfter) !== JSON.stringify(eventArgs.details.valueAsJsonBefore)) {
-                                        // single cell is changed
-                                        Update_D365(table.name, guidColl[0], jsonPayLoadColl[0])
-                                    } else {
-                                        return "ignore this"
-                                    }
-                                } else {
-                                    Update_D365(table.name, guidColl[0], jsonPayLoadColl[0])
-                                }
-                            } else {
-                                // multiple range are changed
-                                guidColl.forEach(function (rowGUID, index) {
-                                    Update_D365(table.name, rowGUID, jsonPayLoadColl[index])
-                                })
+                            // if range content is unchanged, then do not sync
+                            if (eventArgs.details !== undefined
+                                && JSON.stringify(eventArgs.details.valueAsJsonAfter) === JSON.stringify(eventArgs.details.valueAsJsonBefore)) {
+                                return
                             }
+
+                            guidColl.forEach((rowGUID, index) => {
+                                Update_D365(table.name, rowGUID, jsonPayLoadColl[index])
+                            })
                         }
                     }
 
@@ -877,45 +865,33 @@
 
                     switch (thisTableChangeType) {
                         case 'RangeEdited':
-                            let result = await rangeChangeHandler(startRangeRowRelative, endRangeRowRelative, startRangeColRelative, endRangeColRelative)
-
-                            if (result === "ignore this") {
-                                break;
+                            if (isDiscontinuousRanges) {
+                                startRangeRowRelative_Coll.forEach( (item, index) => {
+                                    rangeChangeHandler(startRangeRowRelative_Coll[index], endRangeRowRelative_Coll[index], startRangeColRelative_Coll[index], endRangeColRelative_Coll[index])
+                                })
                             } else {
-                                // clean redo if new change
-                                if (changesTracker[0] !== "ABA") {
-                                    rowChangeHistory_Redo = []
-                                }
-
-                                console.log(`Range Updated: [${eventArgs.address}] in '${table.name}' table.`);
-                                break;
+                                // if case BBA, then do not sync
+                                if (changesTracker[0] === "BBA") { break }
+                                // if range content is unchanged, then do not sync
+                                if (eventArgs.details !== undefined && JSON.stringify(eventArgs.details.valueAsJsonAfter) === JSON.stringify(eventArgs.details.valueAsJsonBefore)) {break}
+                                // if all okay, then sync
+                                rangeChangeHandler(startRangeRowRelative, endRangeRowRelative, startRangeColRelative, endRangeColRelative)
                             }
-                        case "RowInserted":
-                            rowChange = []
-                            await rowInsertedHandler(startRangeRowRelative, endRangeRowRelative, startRangeColRelative, endRangeColRelative, table.name, tableData, range.address.split("!")[1])
-                            rowChangeHistory_Undo.push(rowChange)
-                            rowChange = []
-                            // clean redo if new change
-                            rowChangeHistory_Redo = []
 
+                            console.log(`Range Updated: [${eventArgs.address}] in '${table.name}' table.`);
+                            break;
+                        case "RowInserted":
+                            rowInsertedHandler(startRangeRowRelative, endRangeRowRelative, startRangeColRelative, endRangeColRelative, table.name, tableData, range.address.split("!")[1])
                             console.log(`Row Inserted: [${eventArgs.address}] in '${table.name}' table.`)
                             break;
                         case "RowDeleted":
-                            rowChange = []
-                            await rowDeletedHandler(startRangeRowRelative, endRangeRowRelative, table.name, range.address.split("!")[1])
-                            rowChangeHistory_Undo.push(rowChange)
-                            rowChange = []
-                            // clean redo if new change
-                            rowChangeHistory_Redo = []
-
+                            rowDeletedHandler(startRangeRowRelative, endRangeRowRelative, table.name, range.address.split("!")[1])
                             console.log(`Row Deleted: [${eventArgs.address}] in '${table.name}' table.`)
                             break;
                         case "ColumnInserted":
-
                             console.log(`Column Inserted: [${eventArgs.address}] in '${table.name}' table.`)
                             break;
                         case "ColumnDeleted":
-
                             console.log(`Column Deleted [${eventArgs.address}] in '${table.name}' table.`)
                             break;
                         case "CellInserted":
@@ -939,19 +915,22 @@
         try {
             if (undo_redo = true) { undo_redo = undefined }
             if (changesTracker[1][0] === "Fulfilled") { changesTracker = [[], []] }
+            let copyOfPreviousTableData = previousTableData //keep a copy of current table data
             changesTracker[0] += "A"
 
             Excel.run(function (ctx) {
                 let table = ctx.workbook.tables.getItem(tableID);
                 table.load("name")
                 let tableRange = table.getRange()
-                tableRange.load("rowCount,columnCount, values")
-                let triggerCell = tableRange.getCell(1, 0)
-                triggerCell.load("values")
+                tableRange.load("rowIndex, columnIndex, rowCount, columnCount, values")
 
-                return ctx.sync().then(async () => {
+                return ctx.sync().then( () => {
                     changesTracker[1][0] = "Fulfilled"
+                    previousTableData = tableRange.values // update the previous data
 
+                    let currentTableData = tableRange.values
+
+                    // stop if normal row changes case
                     if (myTables[table.name].length === tableRange.rowCount) {
                         // stop the BBA case for normal row addition
                         return
@@ -959,141 +938,61 @@
                             (changesTracker[0] === "BAB" || changesTracker[0] === "AB")) {
                         // stop the BAB and AB case for normal row addition;
                         return
+                    } 
+
+                    // continue if redo or undo row changes case
+                    let startRangeRowRelative
+                    let startRangeColRelative
+                    let endRangeRowRelative
+                    let endRangeColRelative
+
+                    let rowsGap = tableRange.rowCount - copyOfPreviousTableData.length
+                    function getRowChangeStartPosition(arrayA, arrayB) {
+                        if (JSON.stringify(arrayA) === JSON.stringify(arrayB)) {
+                            return "equivalent"
+                        }
+
+                        let aIndex = 0, bIndex = 0;
+
+                        while (aIndex < arrayA.length || bIndex < arrayB.length) {
+                            if (aIndex > arrayA.length || bIndex > arrayB.length) {
+                                // where the row change occurs
+                                return aIndex
+                            } else if (JSON.stringify(arrayA[aIndex]) === JSON.stringify(arrayB[bIndex])) {
+                                aIndex++;
+                                bIndex++;
+                            } else {
+                                // where the row change occurs
+                                return aIndex
+                            }
+                        }
+                    }
+                    let rowChangeStartPosition
+                    if (changesTracker[0] === "ABA") {
+                        rowChangeStartPosition = rowsGap > 0 ? copyOfPreviousTableData.length : currentTableData.length
+                    } else {
+                        rowChangeStartPosition = getRowChangeStartPosition(copyOfPreviousTableData, currentTableData)
                     }
 
+                    // sync undo or redo row changes
+                    if (rowsGap > 0) {
+                        undo_redo = true
+                        // undo row deletion or redo row addition
+                        startRangeRowRelative = rowChangeStartPosition
+                        startRangeColRelative = 0
+                        endRangeRowRelative = rowChangeStartPosition + rowsGap - 1
+                        endRangeColRelative = tableRange.columnCount
 
-                    if (rowChangeHistory_Undo.length > 0 || rowChangeHistory_Redo.length > 0) {
-                        let startRangeRowRelative_history
-                        let startRangeColRelative_history
-                        let endRangeRowRelative_history
-                        let endRangeColRelative_history
+                        rowInsertedHandler(startRangeRowRelative, endRangeRowRelative, startRangeColRelative, endRangeColRelative, table.name, currentTableData)
+                        console.log(`Row Inserted: [${tableRange.rowIndex + startRangeRowRelative}:${tableRange.rowIndex + endRangeRowRelative}] in '${table.name}' table.`)
+                    } else if (rowsGap < 0) {
+                        undo_redo = true
+                        // undo row addition or redo row deletion
+                        startRangeRowRelative = rowChangeStartPosition
+                        endRangeRowRelative = rowChangeStartPosition - rowsGap - 1
 
-                        let previousRowChangeType
-                        let previousRowAddress
-                        let previousRowsCount
-                        let previousChangeTracker_normal
-                        if (rowChangeHistory_Undo.length > 0) {
-                            previousRowChangeType = rowChangeHistory_Undo.at(-1)[0][0]
-                            previousRowAddress = rowChangeHistory_Undo.at(-1)[0][2]
-                            previousRowsCount = previousRowChangeType === "RowInserted" ? - rowChangeHistory_Undo.at(-1).length : + rowChangeHistory_Undo.at(-1).length
-                            previousChangeTracker_normal = rowChangeHistory_Undo.at(-1)[0][3]
-                        }
-
-                        let nextRowChangeType
-                        let nextRowAddress
-                        let nextRowsCount
-                        let nextChangeTracker_undo
-                        if (rowChangeHistory_Redo.length > 0) {
-                            nextRowChangeType = rowChangeHistory_Redo.at(-1)[0][0]
-                            nextRowAddress = rowChangeHistory_Redo.at(-1)[0][2]
-                            nextRowsCount = nextRowChangeType === "RowInserted" ? + rowChangeHistory_Redo.at(-1).length : - rowChangeHistory_Redo.at(-1).length
-                            nextChangeTracker_undo = rowChangeHistory_Redo.at(-1)[0][4]
-                        }
-
-                        // stop undo and redo similarity issue
-                        let rowsGap = tableRange.rowCount - myTables[table.name].length
-                        let advancedEvidence
-                        if (changesTracker[0] === "A") {
-                            if (previousRowsCount === nextRowsCount) {
-                                if (nextChangeTracker_undo !== "A") {
-                                    advancedEvidence = "Redo"
-                                } else if (!(previousChangeTracker_normal === "B" || previousChangeTracker_normal === "BBA")) {
-                                    advancedEvidence = "Undo"
-                                } else {
-                                    errorHandler("Cannot distinguish between redo and undo")
-                                }
-                                
-                            } else if (previousRowsCount === rowsGap) {
-                                advancedEvidence = "Undo"
-                            } else if (nextRowsCount === rowsGap) {
-                                advancedEvidence = "Redo"
-                            }
-                        }
-
-                        if (myTables[table.name].length < tableRange.rowCount) {
-                            undo_redo = true
-                            if (previousRowChangeType === "RowDeleted"
-                                && changesTracker[0] === "BA"
-                                || advancedEvidence === "Undo") {
-                                // undo row deletion
-                                startRangeRowRelative_history = rowChangeHistory_Undo.at(-1).at(-1)[1]
-                                startRangeColRelative_history = 0
-                                endRangeRowRelative_history = rowChangeHistory_Undo.at(-1)[0][1]
-                                endRangeColRelative_history = tableRange.columnCount
-
-                                rowInsertedHandler(startRangeRowRelative_history, endRangeRowRelative_history, startRangeColRelative_history, endRangeColRelative_history, table.name, tableRange.values)
-                                rowChangeHistory_Redo.push(rowChangeHistory_Undo.pop()) // add this rowAdded history // delete previous rowDeleted history
-                                rowChangeHistory_Redo.at(-1)[0][4] = changesTracker[0]
-                                rowChange = []
-
-                                console.log(`Undo Row Deletion: [${previousRowAddress}] in '${table.name}' table.`)
-                            } else if (nextRowChangeType === "RowInserted"
-                                && (changesTracker[0] === "AA" || changesTracker[0] === "ABA")
-                                || advancedEvidence === "Redo") {
-                                // redo row addition
-                                startRangeRowRelative_history = rowChangeHistory_Redo.at(-1)[0][1]
-                                startRangeColRelative_history = 0
-                                endRangeRowRelative_history = rowChangeHistory_Redo.at(-1).at(-1)[1]
-                                endRangeColRelative_history = tableRange.columnCount
-
-                                rowInsertedHandler(startRangeRowRelative_history, endRangeRowRelative_history, startRangeColRelative_history, endRangeColRelative_history, table.name, tableRange.values)
-                                rowChangeHistory_Undo.push(rowChangeHistory_Redo.pop()) // add this rowAdded history // delete previous rowDeleted history
-                                rowChange = []
-
-                                console.log(`Redo Row Addition: [${nextRowAddress}] in '${table.name}' table.`)
-                            }
-                        } else if (myTables[table.name].length > tableRange.rowCount) {
-                            undo_redo = true
-                            if (previousRowChangeType === "RowInserted"
-                                && (changesTracker[0] === "AA" || changesTracker[0] === "ABA")
-                                || advancedEvidence === "Undo") {
-                                // undo row addition
-                                startRangeRowRelative_history = rowChangeHistory_Undo.at(-1)[0][1]
-                                endRangeRowRelative_history = rowChangeHistory_Undo.at(-1).at(-1)[1]
-
-                                rowDeletedHandler(startRangeRowRelative_history, endRangeRowRelative_history, table.name)
-                                rowChangeHistory_Redo.push(rowChangeHistory_Undo.pop()) // delete previous rowAdded history // add this rowDeleted history
-                                rowChangeHistory_Redo.at(-1)[0][4] = changesTracker[0]
-                                rowChange = []
-
-                                console.log(`Undo Row Addition: [${previousRowAddress}] in '${table.name}' table.`)
-                            } else if (nextRowChangeType === "RowDeleted"
-                                && changesTracker[0] === "AB"
-                                || advancedEvidence === "Redo") {
-                                // redo row deletion
-                                startRangeRowRelative_history = rowChangeHistory_Redo.at(-1).at(-1)[1]
-                                endRangeRowRelative_history = rowChangeHistory_Redo.at(-1)[0][1]
-
-                                rowDeletedHandler(startRangeRowRelative_history, endRangeRowRelative_history, table.name)
-                                rowChangeHistory_Undo.push(rowChangeHistory_Redo.pop()) // delete previous rowAdded history // add this rowDeleted history
-                                rowChange = []
-
-                                console.log(`Redo Row Deletion: [${nextRowAddress}] in '${table.name}' table.`)
-                            }
-                        }
-
-                        // stop the redo and undo similarity issue
-                        if (rowChangeHistory_Undo.length > 0) {
-                            previousRowChangeType = rowChangeHistory_Undo.at(-1)[0][0]
-                            previousChangeTracker_normal = rowChangeHistory_Undo.at(-1)[0][3]
-                            previousRowsCount = previousRowChangeType === "RowInserted" ? - rowChangeHistory_Undo.at(-1).length : + rowChangeHistory_Undo.at(-1).length
-                        }
-                        if (rowChangeHistory_Redo.length > 0) {
-                            nextRowChangeType = rowChangeHistory_Redo.at(-1)[0][0]
-                            nextChangeTracker_undo = rowChangeHistory_Redo.at(-1)[0][4]
-                            nextRowsCount = nextRowChangeType === "RowInserted" ? + rowChangeHistory_Redo.at(-1).length : - rowChangeHistory_Redo.at(-1).length
-                        }
-                        
-                        if (previousRowsCount === nextRowsCount) {
-                            if (nextChangeTracker_undo === "A"
-                                && (previousChangeTracker_normal === "B" || previousChangeTracker_normal === "BBA")
-                            ) {
-                                rowChangeHistory_Redo = []
-                                rowChangeHistory_Undo
-                                ctx.workbook.worksheets.getActiveWorksheet().getRange("XFD1048576").values = null
-                                ctx.sync()
-                            }
-                        }
+                        rowDeletedHandler(startRangeRowRelative, endRangeRowRelative, table.name)
+                        console.log(`Row Deleted: [${tableRange.rowIndex + startRangeRowRelative}:${tableRange.rowIndex + endRangeRowRelative}] in '${table.name}' table.`)
                     }
                 })
             })
@@ -1102,15 +1001,6 @@
         }
 
     }
-
-
-
-
-
-
-
-
-
 
 
 
