@@ -1089,6 +1089,7 @@
                                 && (previousChangeTracker_normal === "B" || previousChangeTracker_normal === "BBA")
                             ) {
                                 rowChangeHistory_Redo = []
+                                rowChangeHistory_Undo
                                 ctx.workbook.worksheets.getActiveWorksheet().getRange("XFD1048576").values = null
                                 ctx.sync()
                             }
