@@ -111,7 +111,7 @@
 
     Office.actions.associate("buttonFunction", function (event) {
         console.log('Hey, you just pressed a ribbon button.')
-
+        Create_D365('sensei_lessonslearned', { 'sensei_name': 'Add Test', 'sc_additionalcommentsnotes': 'ADD Redo_Undo_Event_Done from Web Add-In' })
         event.completed();
     })
 
@@ -173,7 +173,9 @@
             let DataArr = await Read_D365(resourceUrl);
 
             // act as the corresponding table in memory, which records the change in Excel table
-            myTables[tableName] = JSON.parse(JSON.stringify(DataArr))
+            myTables[tableName] = _.cloneDeep(DataArr)
+
+            //if (DataArr.length === 0) {return}
 
             // delete unwanted cols from the array which is going to be pasted into Excel
             let colIndices = excludedColsNames.map(colName => DataArr[0].indexOf(colName)).filter(index => index !== -1);
@@ -521,10 +523,10 @@
             if (finalArr.length > 0) {
                 let finishTime = new Date().getTime();
                 console.log(`Time Used: ${(finishTime - startTime) / 1000}s (${finalArr.length} rows, ${finalArr[0].length} columns)`);
-
                 return finalArr
             } else {
-                throw new Error("No data downloaded");
+                console.log("No data found");
+                return finalArr
             }
 
 
@@ -707,10 +709,12 @@
 
     let guidPromise
     let undo_redo
+    let ABA_updatedRangeAddress
     let previousTableData
-    let changesTracker = [[], []]
+    let changesTracker = ['', '']
+    let multi_undo_redo = ''
     // row change events handlers
-    function rowInsertedHandler(startRow, endRow, startCol, endCol, tableName, tableData, rangeAddress) {
+    function rowInsertedHandler(startRow, endRow, startCol, endCol, tableName, tableData) {
         for (let r = startRow; r <= endRow; r++) {
             let jsonPayLoad = {}
             for (let c = startCol; c <= endCol; c++) {
@@ -729,6 +733,7 @@
                 } else {
                     myTables[tableName].splice(r, 0, ["", "waiting for guid"])
                 }
+
                 // Add in P+ table
                 (async function () {
                     guidPromise = Create_D365(tableName, jsonPayLoad, "sensei_lessonlearnedid");
@@ -737,7 +742,7 @@
             }
         }
     }
-    async function rowDeletedHandler(startRow, endRow, tableName, rangeAddress) {
+    async function rowDeletedHandler(startRow, endRow, tableName) {
         // collect the row num of the rows deleted
         for (let r = endRow; r >= startRow; r--) {
             //let guidColNum = myTables[table.name][0].indexOf(guidColName)
@@ -750,13 +755,53 @@
             myTables[tableName].splice(r, 1)
         }
     }
+    // range content change event handler
+    async function rangeChangeHandler(startRow, endRow, startCol, endCol, thisTableData, thisTableName, thisEventArgs) {
+        // construct the JSON Payload
+        let jsonPayLoadColl = []
+        let guidColl = []
+
+        for (let r = startRow; r <= endRow; r++) {
+            let jsonPayLoad = {}
+            for (let c = startCol; c <= endCol; c++) {
+                let displayColName = thisTableData[0][c]
+                // need a fieldNameConverter - mapping table required.
+                let logicalColNum = myTables[thisTableName][0].indexOf(displayColName)
+                if (logicalColNum > -1) {
+                    let logicalColName = myTables[thisTableName][0][logicalColNum]
+                    jsonPayLoad[logicalColName] = thisTableData[r][c]
+                }
+            }
+            if (Object.keys(jsonPayLoad).length > 0) {
+                jsonPayLoadColl.push(jsonPayLoad)
+                //let guidColNum = myTables[thisTableName][0].indexOf(guidColName)
+                let guidColNum = 1
+                await guidPromise
+                guidColl.push(myTables[thisTableName][r][guidColNum])
+            }
+        }
+
+        // start syncing by sending http request to D365 API
+        if (guidColl.length > 0) {
+            // if range content is unchanged, then do not sync
+            if (thisEventArgs !== undefined && thisEventArgs.details !== undefined
+                && JSON.stringify(thisEventArgs.details.valueAsJsonAfter) === JSON.stringify(thisEventArgs.details.valueAsJsonBefore)) {
+                return
+            }
+
+            guidColl.forEach((rowGUID, index) => {
+                Update_D365(thisTableName, rowGUID, jsonPayLoadColl[index])
+            })
+        }
+    }
 
     // hanle table change.
     function handleTableChange(eventArgs) {
         try {
             if (undo_redo = true) { undo_redo = undefined }
-            if (changesTracker[1][0] === "Fulfilled") { changesTracker = [[], []] }
+            if (changesTracker[1] === "Fulfilled") { changesTracker = ['', ''] }
             changesTracker[0] += "B"
+            ABA_updatedRangeAddress = eventArgs.address
 
             let thisTableChangeType = eventArgs.changeType
             Excel.run( (ctx) => {
@@ -779,14 +824,27 @@
                 tableRange.load("rowIndex, columnIndex, rowCount, columnCount, values")
 
                 return ctx.sync().then( () => {
-                    changesTracker[1][0] = "Fulfilled"
+                    changesTracker[1] = "Fulfilled"
                     previousTableData = tableRange.values // update the previous data
 
-                    if (undo_redo === true && changesTracker[0] === "AB") {
-                        // stop the AB case for redo row deletion
-                        return
-                    } else if (undo_redo === true && changesTracker[0] === "ABA") {
-                        // allow the ABA case for undoing and redoing row addition
+                    
+                     if (multi_undo_redo === true || changesTracker[0] === "BAA" || changesTracker[0].length >= 4) {
+                        // stop the multiple continuous undo and redo opeartions
+                         return
+                     } else if (undo_redo === true) {
+                        if (changesTracker[0] === "AB") {
+                            // stop the AB case for redo row deletion
+                            return
+                        } else if (undo_redo === true && changesTracker[0] === "ABA") {
+                            // allow ABA case for redoing or undoing row addition
+                        }
+                    } else if (myTables[table.name].length < tableRange.rowCount && thisTableChangeType === "RangeEdited") {
+                        if (changesTracker[0] === "BA") {
+                            // stop the BA case for undoing row deletion
+                            return
+                        } else if (changesTracker[0] === "BAB") {
+                            // allow BAB case for normal row addition
+                        }
                     }
 
                     let tableData = tableRange.values
@@ -814,60 +872,11 @@
                         endRangeColRelative = startRangeColRelative + range.columnCount - 1
                     }
 
-                    // range content change event handler
-                    async function rangeChangeHandler(startRow, endRow, startCol, endCol) {
-                        // construct the JSON Payload
-                        let jsonPayLoadColl = []
-                        let guidColl = []
-
-                        for (let r = startRow; r <= endRow; r++) {
-                            let jsonPayLoad = {}
-                            for (let c = startCol; c <= endCol; c++) {
-                                let displayColName = tableData[0][c]
-                                // need a fieldNameConverter - mapping table required.
-                                let logicalColNum = myTables[table.name][0].indexOf(displayColName)
-                                if (logicalColNum > -1) {
-                                    let logicalColName = myTables[table.name][0][logicalColNum]
-                                    jsonPayLoad[logicalColName] = tableData[r][c]
-                                }
-                            }
-                            if (Object.keys(jsonPayLoad).length > 0) {
-                                jsonPayLoadColl.push(jsonPayLoad)
-                                //let guidColNum = myTables[table.name][0].indexOf(guidColName)
-                                let guidColNum = 1
-                                await guidPromise
-                                guidColl.push(myTables[table.name][r][guidColNum])
-                            }
-                        }
-
-                        // start syncing by sending http request to D365 API
-                        if (guidColl.length > 0) {
-                            // if range content is unchanged, then do not sync
-                            if (eventArgs.details !== undefined
-                                && JSON.stringify(eventArgs.details.valueAsJsonAfter) === JSON.stringify(eventArgs.details.valueAsJsonBefore)) {
-                                return
-                            }
-
-                            guidColl.forEach((rowGUID, index) => {
-                                Update_D365(table.name, rowGUID, jsonPayLoadColl[index])
-                            })
-                        }
-                    }
-
-                    if (myTables[table.name].length < tableRange.rowCount && thisTableChangeType === "RangeEdited") {
-                        if (changesTracker[0] === "BAB") {
-                            // allow BAB case for normal row addition
-                        } else if (changesTracker[0] === "BA") {
-                            // stop the BA case for undoing row deletion
-                            return
-                        }
-                    }
-
                     switch (thisTableChangeType) {
                         case 'RangeEdited':
                             if (isDiscontinuousRanges) {
                                 startRangeRowRelative_Coll.forEach( (item, index) => {
-                                    rangeChangeHandler(startRangeRowRelative_Coll[index], endRangeRowRelative_Coll[index], startRangeColRelative_Coll[index], endRangeColRelative_Coll[index])
+                                    rangeChangeHandler(startRangeRowRelative_Coll[index], endRangeRowRelative_Coll[index], startRangeColRelative_Coll[index], endRangeColRelative_Coll[index], tableData, table.name, eventArgs)
                                 })
                             } else {
                                 // if case BBA, then do not sync
@@ -875,17 +884,17 @@
                                 // if range content is unchanged, then do not sync
                                 if (eventArgs.details !== undefined && JSON.stringify(eventArgs.details.valueAsJsonAfter) === JSON.stringify(eventArgs.details.valueAsJsonBefore)) {break}
                                 // if all okay, then sync
-                                rangeChangeHandler(startRangeRowRelative, endRangeRowRelative, startRangeColRelative, endRangeColRelative)
+                                rangeChangeHandler(startRangeRowRelative, endRangeRowRelative, startRangeColRelative, endRangeColRelative, tableData, table.name, eventArgs)
                             }
 
                             console.log(`Range Updated: [${eventArgs.address}] in '${table.name}' table.`);
                             break;
                         case "RowInserted":
-                            rowInsertedHandler(startRangeRowRelative, endRangeRowRelative, startRangeColRelative, endRangeColRelative, table.name, tableData, range.address.split("!")[1])
+                            rowInsertedHandler(startRangeRowRelative, endRangeRowRelative, startRangeColRelative, endRangeColRelative, table.name, tableData)
                             console.log(`Row Inserted: [${eventArgs.address}] in '${table.name}' table.`)
                             break;
                         case "RowDeleted":
-                            rowDeletedHandler(startRangeRowRelative, endRangeRowRelative, table.name, range.address.split("!")[1])
+                            rowDeletedHandler(startRangeRowRelative, endRangeRowRelative, table.name)
                             console.log(`Row Deleted: [${eventArgs.address}] in '${table.name}' table.`)
                             break;
                         case "ColumnInserted":
@@ -914,41 +923,30 @@
     function handleSelectionChange(eventArgs, tableID) {
         try {
             if (undo_redo = true) { undo_redo = undefined }
-            if (changesTracker[1][0] === "Fulfilled") { changesTracker = [[], []] }
-            let copyOfPreviousTableData = previousTableData //keep a copy of current table data
-            changesTracker[0] += "A"
+            if (changesTracker[1] === "Fulfilled") { changesTracker = ['', ''] }  // refersh event tracker
+            changesTracker[0] += "A" // record event order
+            multi_undo_redo = ''  // reset multi redo/undo tracker
+            let previousTableData_copy = previousTableData !== undefined ? previousTableData : undefined //keep a copy of current table data
 
             Excel.run(function (ctx) {
                 let table = ctx.workbook.tables.getItem(tableID);
                 table.load("name")
                 let tableRange = table.getRange()
                 tableRange.load("rowIndex, columnIndex, rowCount, columnCount, values")
+                let ABA_updatedRange
+                if (changesTracker[0] === "ABA") {
+                    ABA_updatedRange = table.worksheet.getRange(ABA_updatedRangeAddress)
+                    ABA_updatedRange.load("rowIndex, columnIndex, rowCount, columnCount, values")
+                }
 
-                return ctx.sync().then( () => {
-                    changesTracker[1][0] = "Fulfilled"
+                return ctx.sync().then(() => {
+                    if (multi_undo_redo) {return }
+
+                    changesTracker[1] = "Fulfilled"
                     previousTableData = tableRange.values // update the previous data
 
-                    let currentTableData = tableRange.values
-
-                    // stop if normal row changes case
-                    if (myTables[table.name].length === tableRange.rowCount) {
-                        // stop the BBA case for normal row addition
-                        return
-                    } else if (myTables[table.name].length < tableRange.rowCount &&
-                            (changesTracker[0] === "BAB" || changesTracker[0] === "AB")) {
-                        // stop the BAB and AB case for normal row addition;
-                        return
-                    } 
-
-                    // continue if redo or undo row changes case
-                    let startRangeRowRelative
-                    let startRangeColRelative
-                    let endRangeRowRelative
-                    let endRangeColRelative
-
-                    let rowsGap = tableRange.rowCount - copyOfPreviousTableData.length
                     function getRowChangeStartPosition(arrayA, arrayB) {
-                        if (JSON.stringify(arrayA) === JSON.stringify(arrayB)) {
+                        if (_.isEqual(arrayA,arrayB)) {
                             return "equivalent"
                         }
 
@@ -967,32 +965,117 @@
                             }
                         }
                     }
-                    let rowChangeStartPosition
+                    let rowsGap = previousTableData_copy !== undefined ? tableRange.rowCount - previousTableData_copy.length : undefined
+                    let currentTableData = tableRange.values
+
                     if (changesTracker[0] === "ABA") {
-                        rowChangeStartPosition = rowsGap > 0 ? copyOfPreviousTableData.length : currentTableData.length
-                    } else {
-                        rowChangeStartPosition = getRowChangeStartPosition(copyOfPreviousTableData, currentTableData)
+                        // update the previous table first to prevent wrong start position of row change
+                        let startPosition_rowsUpdated = ABA_updatedRange.rowIndex - tableRange.rowIndex
+                        let rowsUpdatedCount = ABA_updatedRange.rowCount
+                        previousTableData_copy.splice(startPosition_rowsUpdated, rowsUpdatedCount, ...currentTableData.slice(startPosition_rowsUpdated, startPosition_rowsUpdated + rowsUpdatedCount))
+                    }
+                    let rowChangeStartPosition = previousTableData_copy !== undefined ? getRowChangeStartPosition(previousTableData_copy, currentTableData) : undefined
+
+                    // check for multiple continuous redo or undo operations
+                    if (['B', 'BBA', 'AB', 'BAB'].includes(changesTracker[0])) {
+                        // normal row change operations cannot be multiple continuous undo/redo operations
+                    } else if (['A','AB', 'BA'].includes(changesTracker[0])) {
+                        // reddo and undo case: A, AB and BA, cannot be multiple continuous undo/redo operations
+                    }  else {
+                        // check if multiple continuous undo/redo operations or not
+                        function compareTables(arrayA, arrayB, startPosition, rowsGap) {
+                            let arrayA_copy = _.cloneDeep(arrayA)
+                            let endPosition = rowChangeStartPosition + Math.abs(rowsGap) - 1
+                            if (rowsGap > 0) {
+                                // add previous table
+                                arrayA_copy.splice(startPosition, 0, ...arrayB.slice(startPosition, endPosition + 1))
+                            } else if (rowsGap < 0) {
+                                // delete previous table
+                                arrayA_copy.splice(startPosition, Math.abs(rowsGap))
+                            }
+                            return _.isEqual(arrayA_copy, arrayB)
+                        }
+
+                        if (changesTracker[0].length === 1) {
+                            // single redo or undo: A
+                        } else if (changesTracker[0].length === 2) {
+                            if (changesTracker[0] === "AA") {
+                                if (rowChangeStartPosition === 'equivalent' || rowsGap === 0) {
+                                    multi_undo_redo = true
+                                } else if (!compareTables(previousTableData_copy, currentTableData, rowChangeStartPosition, rowsGap)) {
+                                    // if not equal, then must be multiple redo/undo
+                                    multi_undo_redo = true
+                                }
+                            }
+                        } else if (changesTracker[0].length === 3) {
+                            if (changesTracker[0] === "ABA") {
+                                if (rowChangeStartPosition === 'equivalent' || rowsGap === 0) {
+                                    multi_undo_redo = true
+                                } else if (!compareTables(previousTableData_copy, currentTableData, rowChangeStartPosition, rowsGap)) {
+                                    // if not equal, then must be multiple redo/undo
+                                    multi_undo_redo = true
+                                }
+                            } else if (["BAA", "AAA", "AAB"].includes(changesTracker[0])) {
+                                multi_undo_redo = true
+                            }
+                        } else if (changesTracker[0].length >= 4) {
+                            multi_undo_redo = true
+                        }
                     }
 
+                    if (multi_undo_redo) {
+                        // update the while table because of multiple continuous redo/undo operations
+                        // ignore the header row
+                        //rangeChangeHandler(1, currentTableData.length - 1, 0, currentTableData[0].length - 1, currentTableData, table.name, undefined)
+
+                        (async () => {
+                            await rowDeletedHandler(1, myTables[table.name].length - 1, table.name)
+                            rowInsertedHandler(1, currentTableData.length - 1, 0, currentTableData[0].length - 1, table.name, currentTableData)
+                        })()
+                        
+                        console.log(`Multiple continuous undo or redo operations detected: The whole '${table.name}' table is updated.`);
+                        return 
+                    }
+
+                    // stop if normal row changes case, allows only single undo or redo operation
+                    if (myTables[table.name].length === tableRange.rowCount) {
+                        // stop the BBA case for normal row addition
+                        return
+                    } else if (myTables[table.name].length < tableRange.rowCount &&
+                            (changesTracker[0] === "BAB" || changesTracker[0] === "AB")) {
+                        // stop the BAB and AB case for normal row addition;
+                        return
+                    } 
+
+                    // continue if redo or undo row changes case
+                    //if (changesTracker[0] === "ABA") {
+                    //    rowChangeStartPosition = rowsGap > 0 ? previousTableData_copy.length : currentTableData.length
+                    //}
+
                     // sync undo or redo row changes
+                    let startRangeRowRelative
+                    let startRangeColRelative
+                    let endRangeRowRelative
+                    let endRangeColRelative
+
                     if (rowsGap > 0) {
                         undo_redo = true
                         // undo row deletion or redo row addition
                         startRangeRowRelative = rowChangeStartPosition
                         startRangeColRelative = 0
-                        endRangeRowRelative = rowChangeStartPosition + rowsGap - 1
+                        endRangeRowRelative = rowChangeStartPosition + Math.abs(rowsGap) - 1
                         endRangeColRelative = tableRange.columnCount
 
                         rowInsertedHandler(startRangeRowRelative, endRangeRowRelative, startRangeColRelative, endRangeColRelative, table.name, currentTableData)
-                        console.log(`Row Inserted: [${tableRange.rowIndex + startRangeRowRelative}:${tableRange.rowIndex + endRangeRowRelative}] in '${table.name}' table.`)
+                        console.log(`Row Inserted: [${tableRange.rowIndex + startRangeRowRelative + 1}:${tableRange.rowIndex + endRangeRowRelative + 1}] in '${table.name}' table.`)
                     } else if (rowsGap < 0) {
                         undo_redo = true
                         // undo row addition or redo row deletion
                         startRangeRowRelative = rowChangeStartPosition
-                        endRangeRowRelative = rowChangeStartPosition - rowsGap - 1
+                        endRangeRowRelative = rowChangeStartPosition + Math.abs(rowsGap) - 1
 
                         rowDeletedHandler(startRangeRowRelative, endRangeRowRelative, table.name)
-                        console.log(`Row Deleted: [${tableRange.rowIndex + startRangeRowRelative}:${tableRange.rowIndex + endRangeRowRelative}] in '${table.name}' table.`)
+                        console.log(`Row Deleted: [${tableRange.rowIndex + startRangeRowRelative + 1}:${tableRange.rowIndex + endRangeRowRelative + 1}] in '${table.name}' table.`)
                     }
                 })
             })
