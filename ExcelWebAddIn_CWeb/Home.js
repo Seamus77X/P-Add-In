@@ -709,7 +709,8 @@
 
     let guidPromise
     let undo_redo
-    let ABA_updatedRangeAddress
+    let tableEventAddress
+    let sheetEventAddress
     let previousTableData
     let changesTracker = ['', '']
     let multi_undo_redo = ''
@@ -801,7 +802,7 @@
             if (undo_redo = true) { undo_redo = undefined }
             if (changesTracker[1] === "Fulfilled") { changesTracker = ['', ''] }
             changesTracker[0] += "B"
-            ABA_updatedRangeAddress = eventArgs.address
+            tableEventAddress = eventArgs.address
 
             let thisTableChangeType = eventArgs.changeType
             Excel.run( (ctx) => {
@@ -827,11 +828,18 @@
                     changesTracker[1] = "Fulfilled"
                     previousTableData = tableRange.values // update the previous data
 
-                    
-                     if (multi_undo_redo === true || changesTracker[0] === "BAA" || changesTracker[0].length >= 4) {
+                    let discontinuousRangeChange_undo_redo = false
+                    if (sheetEventAddress !== undefined && sheetEventAddress.includes(",")) {
+                        // check for multiple discontinuous ranges redo or undo  
+                        let numberOfRanges = sheetEventAddress.split(",").length
+                        if (changesTracker[0] === "B".repeat(numberOfRanges) + "A"
+                            || "A" + changesTracker[0] === "B".repeat(numberOfRanges)) {
+                            discontinuousRangeChange_undo_redo = true
+                        }
+                    } else if (multi_undo_redo === true || changesTracker[0] === "BAA" || changesTracker[0].length >= 4) {
                         // stop the multiple continuous undo and redo opeartions
-                         return
-                     } else if (undo_redo === true) {
+                        return
+                    } else if (undo_redo === true) {
                         if (changesTracker[0] === "AB") {
                             // stop the AB case for redo row deletion
                             return
@@ -880,7 +888,7 @@
                                 })
                             } else {
                                 // if case BBA, then do not sync
-                                if (changesTracker[0] === "BBA") { break }
+                                if (["BBA", "BB"].includes(changesTracker[0]) && discontinuousRangeChange_undo_redo === false) { break }
                                 // if range content is unchanged, then do not sync
                                 if (eventArgs.details !== undefined && JSON.stringify(eventArgs.details.valueAsJsonAfter) === JSON.stringify(eventArgs.details.valueAsJsonBefore)) {break}
                                 // if all okay, then sync
@@ -927,6 +935,7 @@
             changesTracker[0] += "A" // record event order
             multi_undo_redo = ''  // reset multi redo/undo tracker
             let previousTableData_copy = previousTableData !== undefined ? previousTableData : undefined //keep a copy of current table data
+            sheetEventAddress = eventArgs.address
 
             Excel.run(function (ctx) {
                 let table = ctx.workbook.tables.getItem(tableID);
@@ -935,7 +944,7 @@
                 tableRange.load("rowIndex, columnIndex, rowCount, columnCount, values")
                 let ABA_updatedRange
                 if (changesTracker[0] === "ABA") {
-                    ABA_updatedRange = table.worksheet.getRange(ABA_updatedRangeAddress)
+                    ABA_updatedRange = table.worksheet.getRange(tableEventAddress)
                     ABA_updatedRange.load("rowIndex, columnIndex, rowCount, columnCount, values")
                 }
 
@@ -977,7 +986,14 @@
                     let rowChangeStartPosition = previousTableData_copy !== undefined ? getRowChangeStartPosition(previousTableData_copy, currentTableData) : undefined
 
                     // check for multiple continuous redo or undo operations
-                    if (['B', 'BBA', 'AB', 'BAB'].includes(changesTracker[0])) {
+                    if (sheetEventAddress.includes(",")) {
+                        // check for multiple discontinuous ranges redo or undo  
+                        let numberOfRanges = sheetEventAddress.split(",").length
+                        if (changesTracker[0] === "B".repeat(numberOfRanges) + "A"
+                            || "A" + changesTracker[0] === "B".repeat(numberOfRanges)) {
+                                return
+                            }
+                    } else if (['B', 'BB', 'BBA', 'AB', 'BAB'].includes(changesTracker[0])) {
                         // normal row change operations cannot be multiple continuous undo/redo operations
                     } else if (['A','AB', 'BA'].includes(changesTracker[0])) {
                         // reddo and undo case: A, AB and BA, cannot be multiple continuous undo/redo operations
