@@ -18,10 +18,14 @@
     const resourceDomain = "https://gsis-pmo-australia-sensei-dev.crm6.dynamics.com/"
 
     // Initialization function that runs each time a new page is loaded.
-    Office.initialize = function (reason) {
+    Office.onReady().then(() => {
+
         $(function () {
             try {
 
+                //////////////////////////////////////////////////
+                // Settting: auto open add-in and show taskpane once the add-in is manually opened bu a user
+                //////////////////////////////////////////////////
                 //Office.context.document.settings.set("Office.AutoShowTaskpaneWithDocument", true);
                 //Office.context.document.settings.saveAsync();
 
@@ -30,6 +34,87 @@
                 //Office.addin.hide();
                 //Office.addin.setStartupBehavior(Office.StartupBehavior.none);
 
+                //////////////////////////////////////////////////
+                // Authentication and access token retrieval logic
+                //////////////////////////////////////////////////
+                setTimeout(authFunction, 500)
+                function authFunction() {
+                    if (accessToken === undefined) {
+                        // Constructing authentication URL
+                        let authUrl = "https://login.microsoftonline.com/common/oauth2/authorize" +
+                            "?client_id=" + clientId +
+                            "&response_type=token" +
+                            "&redirect_uri=" + redirectUrl +
+                            "&response_mode=fragment" +
+                            "&resource=" + resourceDomain;
+
+                        // Displaying authentication dialog
+                        Office.context.ui.displayDialogAsync(authUrl, { height: 30, width: 30, requireHTTPS: true },
+                            function (result) {
+                                if (result.status === Office.AsyncResultStatus.Failed) {
+                                    // If the dialog fails to open, throw an error
+                                    throw new Error("Failed to open dialog: " + result.error.message);
+                                }
+                                dialog = result.value;
+                                dialog.addEventHandler(Office.EventType.DialogEventReceived, processDialogEvent)
+                                dialog.addEventHandler(Office.EventType.DialogMessageReceived, processMessage);
+
+                                // Process message (access token) received from the dialog
+                                function processMessage(arg) {
+                                    try {
+                                        // Check if the message is present
+                                        if (!arg.message) {
+                                            throw new Error("No message received from the dialog.");
+                                        }
+
+                                        // Parse the JSON message received from the dialog
+                                        const response = JSON.parse(arg.message);
+
+                                        // Check the status of the response
+                                        if (response.Status === "Success") {
+                                            // store the token in memory for later use
+                                            accessToken = response.AccessToken
+                                            console.log("Authentication Result: Passed")
+                                        } else if (response.Status === "Error") {
+                                            // Handle the error scenario
+                                            errorHandler(response.Message || "An error occurred.");
+                                        } else {
+                                            // Handle unexpected status
+                                            errorHandler("Unexpected response status.");
+                                        }
+
+                                    } catch (error) {
+                                        // Handle any errors that occur during processing
+                                        errorHandler(error.message);
+                                    } finally {
+                                        // Close the dialog, regardless of whether an error occurred
+                                        dialog.close();
+                                    }
+                                }
+                                function processDialogEvent(arg) {
+                                    switch (arg.error) {
+                                        case 12002:
+                                            showNotification("The dialog box has been directed to a page that it cannot find or load, or the URL syntax is invalid.");
+                                            break;
+                                        case 12003:
+                                            showNotification("The dialog box has been directed to a URL with the HTTP protocol. HTTPS is required.");
+                                            break;
+                                        case 12006:
+                                            showNotification("Dialog closed.");
+                                            break;
+                                        default:
+                                            showNotification("Unknown error in dialog box.");
+                                            break;
+                                    }
+                                }
+                            }
+                        )
+                    }
+                }
+
+                //////////////////////////////////////////////////
+                // Print the Excel Platform
+                //////////////////////////////////////////////////
                 switch (Office.context.platform) {
                     case Office.PlatformType.PC:
                         runningEnvir = Office.PlatformType.PC
@@ -58,6 +143,9 @@
                         break;
                 }
 
+                //////////////////////////////////////////////////
+                // Initialise Add-In taskpane page
+                //////////////////////////////////////////////////
                 // Notification mechanism initialization and hiding it initially
                 let element = document.querySelector('.MessageBanner');
                 messageBanner = new components.MessageBanner(element);
@@ -81,74 +169,25 @@
 
                 $('#button2-text').text("Button 2");
 
-                // Authentication and access token retrieval logic
-                if (typeof accessToken === 'undefined') {
-                    // Constructing authentication URL
-                    let authUrl = "https://login.microsoftonline.com/common/oauth2/authorize" +
-                        "?client_id=" + clientId +
-                        "&response_type=token" +
-                        "&redirect_uri=" + redirectUrl +
-                        "&response_mode=fragment" +
-                        "&resource=" + resourceDomain;
+                //////////////////////////////////////////////////
+                // Add function to Excel ribbon buttons
+                //////////////////////////////////////////////////
+                Office.actions.associate("buttonFunction", function (event) {
+                    console.log('Hey, you just pressed a ribbon button.')
+                    //Create_D365('sensei_lessonslearned', { 'sensei_name': 'Add Test', 'sc_additionalcommentsnotes': 'ADD Redo_Undo_Event_Done from Web Add-In' })
 
-                    // Displaying authentication dialog
-                    Office.context.ui.displayDialogAsync(authUrl, { height: 30, width: 30, requireHTTPS: true },
-                        function (result) {
-                            if (result.status === Office.AsyncResultStatus.Failed) {
-                                // If the dialog fails to open, throw an error
-                                throw new Error("Failed to open dialog: " + result.error.message);
-                            }
-                            dialog = result.value;
-                            dialog.addEventHandler(Office.EventType.DialogMessageReceived, processMessage);
-                        }
-                    );
-                }
+
+
+                    event.completed();
+                })
+
             } catch (error) {
                 errorHandler(error.message)
             }
         });
-    }
-
-    Office.actions.associate("buttonFunction", function (event) {
-        console.log('Hey, you just pressed a ribbon button.')
-        Create_D365('sensei_lessonslearned', { 'sensei_name': 'Add Test', 'sc_additionalcommentsnotes': 'ADD Redo_Undo_Event_Done from Web Add-In' })
-        event.completed();
     })
 
-    // Process message (access token) received from the dialog
-    function processMessage(arg) {
-        try {
-            // Check if the message is present
-            if (!arg.message) {
-                throw new Error("No message received from the dialog.");
-            }
 
-            // Parse the JSON message received from the dialog
-            const response = JSON.parse(arg.message);
-
-            // Check the status of the response
-            if (response.Status === "Success") {
-                // store the token in memory for later use
-                accessToken = response.AccessToken
-                console.log("Authentication Result: Passed")
-            } else if (response.Status === "Error") {
-                // Handle the error scenario
-                errorHandler(response.Message || "An error occurred.");
-            } else {
-                // Handle unexpected status
-                errorHandler("Unexpected response status.");
-            }
-
-        } catch (error) {
-            // Handle any errors that occur during processing
-            errorHandler(error.message);
-        } finally {
-            // Close the dialog, regardless of whether an error occurred
-            if (dialog) {
-                dialog.close();
-            }
-        }
-    }
 
     // Function to load sample data
     async function loadSampleData() {
@@ -828,17 +867,23 @@
                     changesTracker[1] = "Fulfilled"
                     previousTableData = tableRange.values // update the previous data
 
+                    ////////////////////////////////////////////
+                    // Special Case Check
+                    ////////////////////////////////////////////
+
                     let discontinuousRangeChange_undo_redo = false
+                    // continue if undo or redo discontinuous range content change
                     if (sheetEventAddress !== undefined && sheetEventAddress.includes(",")) {
-                        // check for multiple discontinuous ranges redo or undo  
                         let numberOfRanges = sheetEventAddress.split(",").length
                         if (changesTracker[0] === "B".repeat(numberOfRanges) + "A"
                             || "A" + changesTracker[0] === "B".repeat(numberOfRanges)) {
                             discontinuousRangeChange_undo_redo = true
                         }
+                    // quit and let sheet event listener handle this if mutiple continuous undo or redo row changes
                     } else if (multi_undo_redo === true || changesTracker[0] === "BAA" || changesTracker[0].length >= 4) {
                         // stop the multiple continuous undo and redo opeartions
                         return
+                    // allow or stop range update after redo or undo row changes are handled by sheet event listener
                     } else if (undo_redo === true) {
                         if (changesTracker[0] === "AB") {
                             // stop the AB case for redo row deletion
@@ -846,6 +891,7 @@
                         } else if (undo_redo === true && changesTracker[0] === "ABA") {
                             // allow ABA case for redoing or undoing row addition
                         }
+                    // allow or stop range update before row change are handled by sheet event listener
                     } else if (myTables[table.name].length < tableRange.rowCount && thisTableChangeType === "RangeEdited") {
                         if (changesTracker[0] === "BA") {
                             // stop the BA case for undoing row deletion
@@ -949,7 +995,7 @@
                 }
 
                 return ctx.sync().then(() => {
-                    if (multi_undo_redo) {return }
+                    if (multi_undo_redo) {return}
 
                     changesTracker[1] = "Fulfilled"
                     previousTableData = tableRange.values // update the previous data
@@ -985,20 +1031,23 @@
                     }
                     let rowChangeStartPosition = previousTableData_copy !== undefined ? getRowChangeStartPosition(previousTableData_copy, currentTableData) : undefined
 
-                    // check for multiple continuous redo or undo operations
+                    ////////////////////////////////////////////
+                    // Special Case Check
+                    ////////////////////////////////////////////
+
+                    // quit and let table event listener handle this if redo or undo multiple discontinuous range content change
                     if (sheetEventAddress.includes(",")) {
-                        // check for multiple discontinuous ranges redo or undo  
                         let numberOfRanges = sheetEventAddress.split(",").length
                         if (changesTracker[0] === "B".repeat(numberOfRanges) + "A"
                             || "A" + changesTracker[0] === "B".repeat(numberOfRanges)) {
                                 return
-                            }
+                        }
                     } else if (['B', 'BB', 'BBA', 'AB', 'BAB'].includes(changesTracker[0])) {
                         // normal row change operations cannot be multiple continuous undo/redo operations
                     } else if (['A','AB', 'BA'].includes(changesTracker[0])) {
                         // reddo and undo case: A, AB and BA, cannot be multiple continuous undo/redo operations
                     }  else {
-                        // check if multiple continuous undo/redo operations or not
+                        // continue and remark if multiple continuous undo/redo operations
                         function compareTables(arrayA, arrayB, startPosition, rowsGap) {
                             let arrayA_copy = _.cloneDeep(arrayA)
                             let endPosition = rowChangeStartPosition + Math.abs(rowsGap) - 1
@@ -1013,11 +1062,13 @@
                         }
 
                         if (changesTracker[0].length === 1) {
-                            // single redo or undo: A
+                            // single redo or undo operation: A
                         } else if (changesTracker[0].length === 2) {
                             if (changesTracker[0] === "AA") {
+                                // must be undo or redo multiple continuous row changes if no change in tables content or tables row
                                 if (rowChangeStartPosition === 'equivalent' || rowsGap === 0) {
                                     multi_undo_redo = true
+                                // replicate the previous operation for previous table to match current table, if equal, then remark it as not multiple...
                                 } else if (!compareTables(previousTableData_copy, currentTableData, rowChangeStartPosition, rowsGap)) {
                                     // if not equal, then must be multiple redo/undo
                                     multi_undo_redo = true
@@ -1032,18 +1083,17 @@
                                     multi_undo_redo = true
                                 }
                             } else if (["BAA", "AAA", "AAB"].includes(changesTracker[0])) {
+                                // these cases must be multiple....
                                 multi_undo_redo = true
                             }
+                        // if symbol length > 4, it must be multiple....
                         } else if (changesTracker[0].length >= 4) {
                             multi_undo_redo = true
                         }
                     }
 
                     if (multi_undo_redo) {
-                        // update the while table because of multiple continuous redo/undo operations
-                        // ignore the header row
-                        //rangeChangeHandler(1, currentTableData.length - 1, 0, currentTableData[0].length - 1, currentTableData, table.name, undefined)
-
+                        // replace the existing table because multiple continuous redo/undo operations cannot be splited into individual operation
                         (async () => {
                             await rowDeletedHandler(1, myTables[table.name].length - 1, table.name)
                             rowInsertedHandler(1, currentTableData.length - 1, 0, currentTableData[0].length - 1, table.name, currentTableData)
@@ -1062,11 +1112,6 @@
                         // stop the BAB and AB case for normal row addition;
                         return
                     } 
-
-                    // continue if redo or undo row changes case
-                    //if (changesTracker[0] === "ABA") {
-                    //    rowChangeStartPosition = rowsGap > 0 ? previousTableData_copy.length : currentTableData.length
-                    //}
 
                     // sync undo or redo row changes
                     let startRangeRowRelative

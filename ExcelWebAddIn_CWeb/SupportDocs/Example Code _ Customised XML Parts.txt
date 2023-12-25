@@ -1,0 +1,32 @@
+
+                    Excel.run(async (context) => {
+                        // Define your XML with the Workbook GUID and Name elements
+                        const workbookGuid = "Your-Workbook-GUID"; // Replace with your actual GUID
+                        const workbookName = "Your Workbook Name"; // Replace with your actual workbook name
+                        const originalXml = `<WorkbookInfo xmlns='http://schemas.kbr.com/workbookinfo/1.0'>
+                           <WorkbookGUID>${workbookGuid}</WorkbookGUID>
+                           <Name>${workbookName}</Name>
+                         </WorkbookInfo>`;
+
+                        // Add the custom XML part to the workbook
+                        const customXmlPart = context.workbook.customXmlParts.add(originalXml);
+                        customXmlPart.load("id");
+
+                        await context.sync();
+
+                        // Store the XML part's ID for later reference
+                        const settings = context.workbook.settings;
+                        settings.add("WorkbookInfoXmlPartId", customXmlPart.id);
+
+                        await context.sync();
+
+                        // Print the added XML
+                        console.log(`Added XML: ${originalXml}`);
+
+                        // Now read the XML part
+                        const xmlBlob = customXmlPart.getXml();
+                        await context.sync();
+
+                        // Print the XML data
+                        console.log(`XML Data: ${xmlBlob.value}`);
+                    });
