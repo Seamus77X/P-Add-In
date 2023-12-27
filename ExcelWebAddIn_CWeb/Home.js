@@ -5,17 +5,32 @@
 
     // Declaration of global variables for later use
     let messageBanner;
-    let dialog
     let accessToken;  // used to store user's access token
+    let workbookGUID
     let runningEnvir
-    let tableListeners = { "sensei_lessonslearned": null }
-    let myTables = { "sensei_lessonslearned": null }
+    let pp_eacb_rowIdMapping = { }
+    let pp_eacb_fieldNameMapping = {
+        'sensei_lessonslearned': [
+            ["sensei_lessonlearnedid", "Row ID"],
+            ["modifiedon", "Entry Date"],
+            ["sensei_name", "Title"],
+            ["sensei_category", "Category"],
+            ["sensei_lessonlearned", "Detailed Description"],
+            ["sc_projectimpact", "Project Impact"],
+            ["sensei_observation", "When is it likely to occur/when did it occur"],
+            ["sensei_recommendation", "Recommendations"],
+            ["sc_additionalcommentsnotes", "Additional Comments/Notes"]
+        ],
+        'sensei_risks': [],
+        'sc_variations': []
+    }
+    let EntityAttributes = {}
 
 
     // Constants for client ID, redirect URL, and resource domain for authentication
     const clientId = "be63874f-f40e-433a-9f35-46afa1aef385"
     const redirectUrl = "https://seamus77x.github.io/index.html"
-    const resourceDomain = "https://gsis-pmo-australia-sensei-dev.crm6.dynamics.com/"
+    const resourceDomain = "https://gsis-pmo-australia-sensei-demo.crm6.dynamics.com/"
 
     // Initialization function that runs each time a new page is loaded.
     Office.onReady().then(() => {
@@ -33,6 +48,63 @@
                 Office.addin.showAsTaskpane();
                 //Office.addin.hide();
                 //Office.addin.setStartupBehavior(Office.StartupBehavior.none);
+
+                //////////////////////////////////////////////////
+                // Initialise Add-In taskpane page
+                //////////////////////////////////////////////////
+                // Notification mechanism initialization and hiding it initially
+                let element = document.querySelector('.MessageBanner');
+                messageBanner = new components.MessageBanner(element);
+                messageBanner.hideBanner();
+
+                // Fallback logic for versions of Excel older than 2016
+                if (!Office.context.requirements.isSetSupported('ExcelApi', '1.1')) {
+                    throw new Error("Sorry, this add-in only works with newer versions of Excel.")
+                }
+
+                // add external js
+                //$('#myScriptX').attr('src', 'Test.js')
+                //$.getScript('Test.js', function () {
+                //    externalFun()
+                //})
+
+                // UI text setting for buttons and descriptions
+                $('#button1-text').text("Download");
+                $("#button1").attr("title", "Load Data to Excel")
+                $('#button1').on("click", loadSampleData);
+
+                $('#button2-text').text("Button 2");
+
+                //////////////////////////////////////////////////
+                // Print the Excel Platform
+                //////////////////////////////////////////////////
+                switch (Office.context.platform) {
+                    case Office.PlatformType.PC:
+                        runningEnvir = Office.PlatformType.PC
+                        console.log('Excel Platform: Desktop Excel on Windows');
+                        break;
+                    case Office.PlatformType.Mac:
+                        runningEnvir = Office.PlatformType.Mac
+                        console.log('Excel Platform: Desktop Excel on Mac');
+                        break;
+                    case Office.PlatformType.OfficeOnline:
+                        runningEnvir = Office.PlatformType.OfficeOnline
+                        console.log('Excel Platform: Web Excel');
+                        break;
+                    case Office.PlatformType.iOS:
+                        runningEnvir = Office.PlatformType.iOS
+                        console.log('Excel Platform: Excel on iOS');
+                        break;
+                    case Office.PlatformType.Android:
+                        runningEnvir = Office.PlatformType.Android
+                        console.log('Excel Platform: Excel on Android');
+                        break;
+                    // You can add more cases here as needed
+                    default:
+                        runningEnvir = PlatformNotFound
+                        console.log('Excel Platform: Not Identified');
+                        break;
+                }
 
                 //////////////////////////////////////////////////
                 // Authentication and access token retrieval logic
@@ -55,7 +127,7 @@
                                     // If the dialog fails to open, throw an error
                                     throw new Error("Failed to open dialog: " + result.error.message);
                                 }
-                                dialog = result.value;
+                                let dialog = result.value;
                                 dialog.addEventHandler(Office.EventType.DialogEventReceived, processDialogEvent)
                                 dialog.addEventHandler(Office.EventType.DialogMessageReceived, processMessage);
 
@@ -112,62 +184,35 @@
                     }
                 }
 
-                //////////////////////////////////////////////////
-                // Print the Excel Platform
-                //////////////////////////////////////////////////
-                switch (Office.context.platform) {
-                    case Office.PlatformType.PC:
-                        runningEnvir = Office.PlatformType.PC
-                        console.log('Excel Platform: Desktop Excel on Windows');
-                        break;
-                    case Office.PlatformType.Mac:
-                        runningEnvir = Office.PlatformType.Mac
-                        console.log('Excel Platform: Desktop Excel on Mac');
-                        break;
-                    case Office.PlatformType.OfficeOnline:
-                        runningEnvir = Office.PlatformType.OfficeOnline
-                        console.log('Excel Platform: Web Excel');
-                        break;
-                    case Office.PlatformType.iOS:
-                        runningEnvir = Office.PlatformType.iOS
-                        console.log('Excel Platform: Excel on iOS');
-                        break;
-                    case Office.PlatformType.Android:
-                        runningEnvir = Office.PlatformType.Android
-                        console.log('Excel Platform: Excel on Android');
-                        break;
-                    // You can add more cases here as needed
-                    default:
-                        runningEnvir = PlatformNotFound
-                        console.log('Excel Platform: Not Identified');
-                        break;
-                }
 
                 //////////////////////////////////////////////////
-                // Initialise Add-In taskpane page
+                // Register the workbook
                 //////////////////////////////////////////////////
-                // Notification mechanism initialization and hiding it initially
-                let element = document.querySelector('.MessageBanner');
-                messageBanner = new components.MessageBanner(element);
-                messageBanner.hideBanner();
+                (async () => {
+                    Excel.run(async (context) => {
+                        const workbook = context.workbook;
+                        const properties = workbook.properties;
+                        const customProperties = properties.custom;
 
-                // Fallback logic for versions of Excel older than 2016
-                if (!Office.context.requirements.isSetSupported('ExcelApi', '1.1')) {
-                    throw new Error("Sorry, this add-in only works with newer versions of Excel.")
-                }
+                        properties.load('creationDate');
+                        customProperties.load("items/key, items/value");
 
-                // add external js
-                //$('#myScriptX').attr('src', 'Test.js')
-                //$.getScript('Test.js', function () {
-                //    externalFun()
-                //})
+                        await context.sync();
 
-                // UI text setting for buttons and descriptions
-                $('#button1-text').text("Download");
-                $("#button1").attr("title", "Load Data to Excel")
-                $('#button1').on("click", loadSampleData);
+                        // Check if the property already exists
+                        const existingProperty = customProperties.items.find(prop => prop.key === "Workbook ID");
+                        if (existingProperty) {
+                            workbookGUID = existingProperty.value
+                            console.log("Workbook ID retrieved.");
+                        } else {
+                            workbookGUID = `[${uuid.v4()}] - ${properties.creationDate}`
+                            customProperties.add("Workbook ID", workbookGUID); // Add new property
 
-                $('#button2-text').text("Button 2");
+                            await context.sync();
+                            console.log("Workbook ID created.");
+                        }
+                    });
+                })()
 
                 //////////////////////////////////////////////////
                 // Add function to Excel ribbon buttons
@@ -176,8 +221,8 @@
                     console.log('Hey, you just pressed a ribbon button.')
                     //Create_D365('sensei_lessonslearned', { 'sensei_name': 'Add Test', 'sc_additionalcommentsnotes': 'ADD Redo_Undo_Event_Done from Web Add-In' })
 
-
-
+                    console.log(pp_eacb_rowIdMapping)
+                    console.log(EntityAttributes)
                     event.completed();
                 })
 
@@ -187,32 +232,33 @@
         });
     })
 
-
-
-    // Function to load sample data
     async function loadSampleData() {
-        const tableName = 'sensei_lessonslearned'
-        const excludedColsNames = ['@odata.etag', 'sensei_lessonlearnedid']
-        const odataCondition = '?$select=sensei_lessonlearnedid,sensei_name,sensei_lessonlearned,sensei_observation,sensei_actiontaken'
 
-        await loadData(`${resourceDomain}api/data/v9.2/${tableName}${odataCondition}`
-            , tableName, 1, 'Sheet1', 'A1', excludedColsNames)
+        //sc_integrationrecentgranulartransactions
+        //sensei_financialtransactions?$select=sc_kbrkey,sc_vendorname,sensei_value,sc_docdate,sensei_financialtransactionid&$top=50000
+
+        await Excel.run(async (ctx) => {
+            ctx.application.calculationMode = Excel.CalculationMode.manual;
+            ctx.runtime.enableEvents = false;
+            await ctx.sync();
+
+            await loadData(['sensei_lessonslearned']);
+
+            ctx.application.calculationMode = Excel.CalculationMode.automatic;
+            ctx.runtime.enableEvents = true;
+
+            await ctx.sync();
+        });
     }
-    //sc_integrationrecentgranulartransactions
-    //sensei_financialtransaction
-    //sensei_financialtransactions?$select=sc_kbrkey,sc_vendorname,sensei_value,sc_docdate,sensei_financialtransactionid&$top=50000
 
 
     // Function to retrieve data from Dynamics 365
-    async function loadData(resourceUrl, tableName, Col_To_Paste_In_Table = 1, defaultSheet = 'Sheet1', defaultTpLeftRng = 'A1', excludedColsNames = ['@odata.etag']) {
+    async function loadDaaata(resourceUrl, tableName, FirstDataColumnIndex = 1, defaultSheet = 'Sheet1', defaultTpLeftRng = 'A1', excludedColsNames = ['@odata.etag']) {
         try {
-            // turn off the listener to the table when refreshing
-            await toggleEventListener(false)
-
             let DataArr = await Read_D365(resourceUrl);
 
             // act as the corresponding table in memory, which records the change in Excel table
-            myTables[tableName] = _.cloneDeep(DataArr)
+            pp_eacb_rowIdMapping[tableName] = _.cloneDeep(DataArr)
 
             //if (DataArr.length === 0) {return}
 
@@ -232,7 +278,6 @@
             await Excel.run(async (ctx) => {
                 const ThisWorkbook = ctx.workbook;
                 const Worksheets = ThisWorkbook.worksheets;
-                ctx.application.calculationMode = Excel.CalculationMode.manual;
                 Worksheets.load("items/tables/items/name");
 
                 await ctx.sync();
@@ -271,16 +316,17 @@
                     }
 
                     if (tableFound) {
+                        // Situation 1: If the table exists, update existing one
                         // delete header row of DataArr
                         DataArr.shift()
 
                         // add LHS and RHS formula cols to expand dataArr
                         let excelTableRightColNo = columnNameToNumber(oldRangeAddress.split(":")[1].replace(/\d+$/, ''))
-                        let ppTableRightColNo = columnNameToNumber(oldRangeAddress.split(":")[0].replace(/\d+$/, '')) + Col_To_Paste_In_Table - 1 + DataArr[0].length - 1
+                        let ppTableRightColNo = columnNameToNumber(oldRangeAddress.split(":")[0].replace(/\d+$/, '')) + FirstDataColumnIndex - 1 + DataArr[0].length - 1
                         DataArr.forEach(row => {
-                            if (Col_To_Paste_In_Table > 1) {
+                            if (FirstDataColumnIndex > 1) {
                                 let tempRowFormula = oldFirstRow_formula
-                                row.unshift(...tempRowFormula[0].slice(0, Col_To_Paste_In_Table - 1))
+                                row.unshift(...tempRowFormula[0].slice(0, FirstDataColumnIndex - 1))
                             }
 
                             if (excelTableRightColNo > ppTableRightColNo) {
@@ -349,17 +395,176 @@
         } catch (error) {
             errorHandler(error.message)
         } finally {
-            // turn on the auto calculation in Excel
-            Excel.run(async (ctx) => {
-                ctx.application.calculationMode = Excel.CalculationMode.automatic;
-                await ctx.sync()
-            })
-            // turn on the listener to the table when refreshing
-            toggleEventListener(true)
             // add listener to the table if no listener
             registerTableChangeEvent(tableName)
         }
     }
+
+
+    async function loadData(validTables) {
+        try {
+            await Excel.run(async (context) => {
+                const workbook = context.workbook;
+                const worksheets = workbook.worksheets;
+                worksheets.load('items/tables/items/name, items/tables/items/id, items/tables/items/columns/items/name, items/tables/items/columns/items/index');
+                await context.sync();
+
+                const tablePromises = [];
+                for (const sheet of worksheets.items) {
+                    for (const table of sheet.tables.items) {
+                        if (validTables.includes(table.name)) {
+                            tablePromises.push(processTable(table, sheet, context));
+                            // add listener to the table if no listener
+                            registerTableChangeEvent(table)
+                        }
+                    }
+                }
+
+                // Execute all table updates concurrently
+                await Promise.all(tablePromises);
+            });
+        } catch (error) {
+            errorHandler(error);
+        }
+
+        async function processTable(table, sheet, context) {
+            let selectArr
+            let filterArr
+            let selectCondition
+            let filterCondition
+            let expandCondition
+            let entityPath
+            let url
+            let mappingArray = pp_eacb_fieldNameMapping[table.name];
+            let tablePromises = []
+
+            // get Logical Name of the table
+            entityPath = 'EntityDefinitions'
+            selectCondition = '?$select=LogicalName'
+            filterCondition = `&$filter=EntitySetName eq '${table.name}'`
+            url = `${resourceDomain}api/data/v9.2/${entityPath}${selectCondition}${filterCondition}&LabelLanguages=1033`
+            let EntityLogicalName = await Read_D365(url).then((result) => {
+                return result[1][result[0].indexOf("LogicalName")]
+            })
+
+            // get the Field Proerties of the table
+            EntityAttributes[table.name] = {}
+
+            entityPath = `EntityDefinitions(LogicalName='${EntityLogicalName}')/Attributes`
+            selectArr = ['MetadataId', 'LogicalName', 'AttributeType', 'IsPrimaryId', 'IsPrimaryName']
+            filterArr = mappingArray.map(entry => `LogicalName eq '${entry[0]}'`);
+            selectCondition = `?$select=${selectArr.join(',')}`
+            filterCondition = `&$filter=${filterArr.join(' or ')}`
+            
+            url = `${resourceDomain}api/data/v9.2/${entityPath}${selectCondition}${filterCondition}&LabelLanguages=1033`;
+            tablePromises.push(Read_D365(url).then((result) => {
+                let IsPrimaryId_colNo = result[0].indexOf('IsPrimaryId')
+                let LogicalName_colNo = result[0].indexOf('LogicalName')
+                let primaryIdRow = result.find(row => row[IsPrimaryId_colNo] === true)
+                let primaryColName = primaryIdRow ? primaryIdRow[LogicalName_colNo] : undefined;
+
+                let excludedCols_index = ['MetadataId', '@odata.type', 'IsPrimaryId', 'IsPrimaryName'].map(fieldName => result[0].indexOf(fieldName))
+                let properties = result.map(row => row.filter((item, index) => !excludedCols_index.includes(index)))
+
+                EntityAttributes[table.name]["PrimaryName"] = primaryColName
+                EntityAttributes[table.name]["EntityDefinitions"] = properties
+            }))
+
+            // get the PickLists Field Properties of the table
+            selectArr = ['MetadataId', 'LogicalName']
+            selectCondition = `?$select=${selectArr.join(',')}`
+            entityPath = `EntityDefinitions(LogicalName='${EntityLogicalName}')/Attributes/Microsoft.Dynamics.CRM.PicklistAttributeMetadata`
+            expandCondition = `&$expand=GlobalOptionSet($select=Options)` 
+
+            url = `${resourceDomain}api/data/v9.2/${entityPath}${selectCondition}${expandCondition}&LabelLanguages=1033`;
+            tablePromises.push(Read_D365(url).then((result) => {
+                let thisPickList = {}
+
+                let headerRow = result.shift()
+                let picklistName_colNum = headerRow.indexOf('LogicalName')
+                let picklist_colNum = headerRow.indexOf('GlobalOptionSet / Options')
+
+                result.forEach(row => {
+                    let picklist_name = row[picklistName_colNum]
+                    let picklist_options = row[picklist_colNum].map(option => {
+                        let value = option['Value']
+                        let key = option['Label']['UserLocalizedLabel']['Label']
+                        return [key, value]
+                    })
+                    thisPickList[picklist_name] = picklist_options
+                }) 
+
+                EntityAttributes[table.name]["PickLists"] = thisPickList
+            }))
+
+            // get P+ table
+            entityPath = table.name
+            selectCondition = `?$select=${mappingArray.map(entry => entry[0]).join(',')}`;
+            url = `${resourceDomain}api/data/v9.2/${entityPath}${selectCondition}`;
+            tablePromises.push(Read_D365(url))
+
+            let results = await Promise.all(tablePromises);
+            let DataArr = results.at(-1).map(row => 
+                row.map(item => item === null ? '' : item)
+            )
+
+            // Update existing table
+            let logicalHeaderNames = DataArr.shift(); // Remove header row
+            let primaryColNum = logicalHeaderNames.indexOf(EntityAttributes[table.name]["PrimaryName"])
+            // Create an array of promises
+            let mappingPromises = DataArr.map(row => {
+                return hashString(JSON.stringify(row))
+                    .then(hash => [row[primaryColNum], hash]);
+            });
+
+            // Resolve all promises and assign the results
+            Promise.all(mappingPromises).then(mappingTab => {
+                pp_eacb_rowIdMapping[workbookGUID + table.name] = mappingTab;
+            })
+
+            const firstRowRange = table.getDataBodyRange().getRow(0).load('formulas');
+            const dataBodyRange = table.getDataBodyRange().load('address');
+            await context.sync();
+
+            const firstRowFormulas = firstRowRange.formulas[0];
+            const updatedData = DataArr.map(row => {
+                return table.columns.items.map(column => {
+                    const mappingEntry = mappingArray.find(entry => entry[1] === column.name);
+                    if (mappingEntry) {
+                        const columnIndexInUpdatedData = logicalHeaderNames.findIndex(col => col === mappingEntry[0]);
+                        return columnIndexInUpdatedData >= 0 ? row[columnIndexInUpdatedData] : null;
+                    } else {
+                        return firstRowFormulas[column.index];
+                    }
+                });
+            });
+
+            // Clear existing data in the table
+            table.getDataBodyRange().clear()
+
+            // Paste the updated data into Excel
+            let startRow = parseInt(dataBodyRange.address.split("!")[1].match(/\d+/), 10);
+            let newEndRow = startRow + DataArr.length - 1;
+            let newRangeAddress = dataBodyRange.address.split("!")[1].replace(/\d+$/, newEndRow);
+
+            const updatedRange = sheet.getRange(newRangeAddress);
+            updatedRange.values = updatedData;
+
+            // Resize the table including the header row
+            startRow = parseInt(newRangeAddress.match(/\d+/), 10);
+            let headerRowNumber = startRow - 1;
+            let resizedRangeAddress = newRangeAddress.replace(/\d+/, headerRowNumber);
+
+            let resizedRange = sheet.getRange(resizedRangeAddress);
+            table.resize(resizedRange);
+
+            resizedRange.format.autofitColumns();
+            resizedRange.format.autofitRows();
+
+            await context.sync();
+        }
+    }
+
 
     function splitArrayIntoSmallPieces(data, maxChunkSizeInMB = 3.3) {
 
@@ -384,7 +589,7 @@
 
         return chunks;
     }
-    async function pasteChunksToExcel(chunks, rangeAddressToPaste, sheet, ctx) {
+    function pasteChunksToExcel(chunks, rangeAddressToPaste, sheet, ctx) {
         const startCol = rangeAddressToPaste.match(/[A-Za-z]+/)[0];
         let startRow = parseInt(rangeAddressToPaste.match(/\d+/)[0], 10);
 
@@ -397,32 +602,10 @@
             const rangeAddress = `${startCol}${startRow}:${endCol}${endRow}`;
             const range = sheet.getRange(rangeAddress);
             range.values = chunk;
-            await ctx.sync();
+            ctx.sync();
 
             startRow += chunkRowCount; // Update startRow for the next chunk
         }
-    }
-    async function toggleEventListener(eventBoolean) {
-        await Excel.run(async (context) => {
-            //context.runtime.load("enableEvents");
-            //await context.sync();
-
-            //let eventBoolean = !context.runtime.enableEvents;
-            context.runtime.enableEvents = eventBoolean;
-            if (eventBoolean) {
-                console.log("Events Status: On");
-            } else {
-                console.log("Events Status: Off");
-            }
-
-            await context.sync();
-        });
-    }
-
-    async function updateData() {
-        Update_D365('sensei_lessonslearned', '0f0db491-3421-ee11-9966-000d3a798402', { 'sc_additionalcommentsnotes': 'Update Test' })
-        //Create_D365('sensei_lessonslearned', { 'sensei_name': 'Add Test', 'sc_additionalcommentsnotes': 'ADD Redo_Undo_Event_Done from Web Add-In' })
-        //Delete_D365('sensei_lessonslearned','f38edda5-8d8d-ee11-be35-6045bd3db52a')
     }
 
 
@@ -700,89 +883,81 @@
         messageBanner.toggleExpansion();
     }
 
-
-    async function registerTableChangeEvent(tableName) {
+    let sheetEventListeners = {};
+    function registerTableChangeEvent(table) {
         try {
-            if (tableListeners[tableName]) {
-                return
+            // Check if listener has already been added
+            if (!sheetEventListeners[table.id]) {
+                Excel.run(function (ctx) {
+                    // if the table found, then listen to the change in the table
+                    table.onChanged.add(handleTableChange)
+                    table.worksheet.onSelectionChanged.add((eventArgs) => {
+                        handleSelectionChange(eventArgs, table.id);
+                    });
+                    console.log(`Events Listener Added: ${table.name}`)
+                    // Update the map
+                    sheetEventListeners[table.id] = true;
+                    return ctx.sync()
+                })
             }
-
-            let ThisWorkbook;
-            let Worksheets;
-
-            Excel.run(function (ctx) {
-
-                ThisWorkbook = ctx.workbook;
-                Worksheets = ThisWorkbook.worksheets;
-                Worksheets.load("items/tables/items/name, items/tables/items/id");
-                return ctx.sync().then(() => {
-                    for (let sheet of Worksheets.items) {
-                        const tables = sheet.tables;
-                        // Check if the 'Test' table exists in the current sheet
-                        let table = tables.items.find(t => t.name === tableName);
-
-                        if (table) {
-                            // if the table found, then listen to the change in the table
-                            tableListeners[tableName] = table.onChanged.add(handleTableChange)
-                            table.worksheet.onSelectionChanged.add((eventArgs) => {
-                                handleSelectionChange(eventArgs, table.id);
-                            });
-                            console.log(`Events Listener Added: ${tableName}`)
-                            break;
-                        }
-                    }
-
-                    if (!tableListeners[tableName]) {
-                        // if the table not found, then raise an error
-                        throw new Error(`[${tableName}] table is not found in Excel`);
-                    }
-                }).then(ctx.sync);
-
-            })
         } catch (error) {
             // Error handling for issues within the Excel.run block
-            errorHandler("Error in registerTableChangeEvent: " + error.message);
+            errorHandler(error.message);
         }
     }
+
 
 
     let undo_redo
     let tableEventAddress
     let sheetEventAddress
     let previousTableData
-    let changesTracker = ['', '']
+    let eventsTracker = ['', '']
     let multi_undo_redo = ''
     // row change events handlers
     function rowInsertedHandler(startRow, endRow, startCol, endCol, tableName, tableData) {
+        let rowId_Mapping = pp_eacb_rowIdMapping[workbookGUID + tableName]
+        let promiseArray = [];
+
         for (let r = startRow; r <= endRow; r++) {
-            let jsonPayLoad = {}
+            let jsonPayLoad = {};
             for (let c = startCol; c <= endCol; c++) {
-                let displayColName = tableData[0][c]
-                // need a fieldNameConverter - mapping table required.
-                let logicalColNum = myTables[tableName][0].indexOf(displayColName)
-                if (logicalColNum > -1) {
-                    let logicalColName = myTables[tableName][0][logicalColNum]
-                    jsonPayLoad[logicalColName] = tableData[r][c]
+                let displayColName = tableData[0][c];
+                let mappingEntry = pp_eacb_fieldNameMapping[tableName].find(entry => entry[1] === displayColName);
+                if (mappingEntry) {
+                    let logicalColName = mappingEntry[0];
+                    jsonPayLoad[logicalColName] = tableData[r][c];
                 }
             }
+
             if (Object.keys(jsonPayLoad).length > 0) {
-                // add the row in memory table as well
-                if (r + 1 > myTables[tableName].length) {
-                    myTables[tableName].push(["", Create_D365(tableName, jsonPayLoad, "sensei_lessonlearnedid")])
+                let createD365Promise = Create_D365(tableName, jsonPayLoad, EntityAttributes[tableName]["PrimaryName"])
+                // update row mapping table
+                let tempID = uuid.v4()
+                if (r - 1 + 1 > rowId_Mapping.length) {
+                    rowId_Mapping.push([createD365Promise, "Hash", tempID]);
                 } else {
-                    myTables[tableName].splice(r, 0, ["", Create_D365(tableName, jsonPayLoad, "sensei_lessonlearnedid")])
+                    rowId_Mapping.splice(r - 1, 0, [createD365Promise, "Hash", tempID]);
                 }
+                // replace promise with the guid once promise is resolved
+                (async () => {
+                    let guid = createD365Promise instanceof Promise ? await createD365Promise : createD365Promise;
+                    let existedRow = rowId_Mapping.find(rowInfo => rowInfo[2] === tempID)
+                    if (existedRow) {
+                        rowId_Mapping[r - 1] = [guid, "Hash"]
+                    }
+                })()
             }
         }
     }
+
     function rowDeletedHandler(startRow, endRow, tableName) {
+        let rowId_Mapping = pp_eacb_rowIdMapping[workbookGUID + tableName]
+
         // collect the row num of the rows deleted
         for (let r = endRow; r >= startRow; r--) {
-            //let guidColNum = myTables[table.name][0].indexOf(guidColName)
-            let guidColNum = 1
-
             // Ensure the GUID is resolved
-            let guidOrPromise = myTables[tableName][r][guidColNum];
+            let guidOrPromise = rowId_Mapping[r - 1][0];
 
             (async () => {
                 let guid = guidOrPromise instanceof Promise ? await guidOrPromise : guidOrPromise;
@@ -791,34 +966,32 @@
             })()
             
             // delete the row in memeory table as well
-            myTables[tableName].splice(r, 1)
+            rowId_Mapping.splice(r-1, 1)
         }
     }
     // range content change event handler
     function rangeChangeHandler(startRow, endRow, startCol, endCol, thisTableData, thisTableName, thisEventArgs) {
-        // construct the JSON Payload
+        // construct the JSON PayloadRowNo_RowGUID_MappingTable
+        let rowId_Mapping = pp_eacb_rowIdMapping[workbookGUID + thisTableName]
 
         for (let r = startRow; r <= endRow; r++) {
-            let jsonPayLoad = {}
+            let jsonPayLoad = {};
             for (let c = startCol; c <= endCol; c++) {
-                let displayColName = thisTableData[0][c]
-                // need a fieldNameConverter - mapping table required.
-                let logicalColNum = myTables[thisTableName][0].indexOf(displayColName)
-                if (logicalColNum > -1) {
-                    let logicalColName = myTables[thisTableName][0][logicalColNum]
-                    jsonPayLoad[logicalColName] = thisTableData[r][c]
+                let displayColName = thisTableData[0][c];
+                // Use pp_eacb_fieldNameMapping for converting display names to logical names.
+                let mappingEntry = pp_eacb_fieldNameMapping[thisTableName].find(entry => entry[1] === displayColName);
+                if (mappingEntry) {
+                    let logicalColName = mappingEntry[0];
+                    jsonPayLoad[logicalColName] = thisTableData[r][c];
                 }
             }
-            if (Object.keys(jsonPayLoad).length > 0) {
-                //let guidColNum = myTables[thisTableName][0].indexOf(guidColName)
-                let guidColNum = 1
 
+            if (Object.keys(jsonPayLoad).length > 0) {
                 // Ensure the GUID is resolved
-                let guidOrPromise = myTables[thisTableName][r][guidColNum];
+                let guidOrPromise = rowId_Mapping[r - 1][0];
 
                 (async () => {
                     let guid = guidOrPromise instanceof Promise ? await guidOrPromise : guidOrPromise;
-
                     if (thisEventArgs !== undefined && thisEventArgs.details !== undefined
                         && JSON.stringify(thisEventArgs.details.valueAsJsonAfter) === JSON.stringify(thisEventArgs.details.valueAsJsonBefore)) {
                         // if range content is unchanged, then do not sync
@@ -834,8 +1007,8 @@
     function handleTableChange(eventArgs) {
         try {
             if (undo_redo = true) { undo_redo = undefined }
-            if (changesTracker[1] === "Fulfilled") { changesTracker = ['', ''] }
-            changesTracker[0] += "B"
+            if (eventsTracker[1] === "Fulfilled") { eventsTracker = ['', ''] }
+            eventsTracker[0] += "B"
             tableEventAddress = eventArgs.address
 
             let thisTableChangeType = eventArgs.changeType
@@ -858,8 +1031,9 @@
                 let tableRange = table.getRange()
                 tableRange.load("rowIndex, columnIndex, rowCount, columnCount, values")
 
-                return ctx.sync().then( () => {
-                    changesTracker[1] = "Fulfilled"
+                return ctx.sync().then(() => {
+                    let rowId_Mapping = pp_eacb_rowIdMapping[workbookGUID + table.name]
+                    eventsTracker[1] = "Fulfilled"
                     previousTableData = tableRange.values // update the previous data
 
                     ////////////////////////////////////////////
@@ -870,28 +1044,28 @@
                     // continue if undo or redo discontinuous range content change
                     if (sheetEventAddress !== undefined && sheetEventAddress.includes(",")) {
                         let numberOfRanges = sheetEventAddress.split(",").length
-                        if (changesTracker[0] === "B".repeat(numberOfRanges) + "A"
-                            || "A" + changesTracker[0] === "B".repeat(numberOfRanges)) {
+                        if (eventsTracker[0] === "B".repeat(numberOfRanges) + "A"
+                            || "A" + eventsTracker[0] === "B".repeat(numberOfRanges)) {
                             discontinuousRangeChange_undo_redo = true
                         }
                     // quit and let sheet event listener handle this if mutiple continuous undo or redo row changes
-                    } else if (multi_undo_redo === true || changesTracker[0] === "BAA" || changesTracker[0].length >= 4) {
+                    } else if (multi_undo_redo === true || eventsTracker[0] === "BAA" || eventsTracker[0].length >= 4) {
                         // stop the multiple continuous undo and redo opeartions
                         return
                     // allow or stop range update after redo or undo row changes are handled by sheet event listener
                     } else if (undo_redo === true) {
-                        if (changesTracker[0] === "AB") {
+                        if (eventsTracker[0] === "AB") {
                             // stop the AB case for redo row deletion
                             return
-                        } else if (undo_redo === true && changesTracker[0] === "ABA") {
+                        } else if (undo_redo === true && eventsTracker[0] === "ABA") {
                             // allow ABA case for redoing or undoing row addition
                         }
                     // allow or stop range update before row change are handled by sheet event listener
-                    } else if (myTables[table.name].length < tableRange.rowCount && thisTableChangeType === "RangeEdited") {
-                        if (changesTracker[0] === "BA") {
+                    } else if (rowId_Mapping.length + 1 < tableRange.rowCount && thisTableChangeType === "RangeEdited") {
+                        if (eventsTracker[0] === "BA") {
                             // stop the BA case for undoing row deletion
                             return
-                        } else if (changesTracker[0] === "BAB") {
+                        } else if (eventsTracker[0] === "BAB") {
                             // allow BAB case for normal row addition
                         }
                     }
@@ -929,7 +1103,7 @@
                                 })
                             } else {
                                 // if case BBA, then do not sync
-                                if (["BBA", "BB"].includes(changesTracker[0]) && discontinuousRangeChange_undo_redo === false) { break }
+                                if (["BBA", "BB"].includes(eventsTracker[0]) && discontinuousRangeChange_undo_redo === false) { break }
                                 // if range content is unchanged, then do not sync
                                 if (eventArgs.details !== undefined && JSON.stringify(eventArgs.details.valueAsJsonAfter) === JSON.stringify(eventArgs.details.valueAsJsonBefore)) {break}
                                 // if all okay, then sync
@@ -972,8 +1146,8 @@
     function handleSelectionChange(eventArgs, tableID) {
         try {
             if (undo_redo = true) { undo_redo = undefined }
-            if (changesTracker[1] === "Fulfilled") { changesTracker = ['', ''] }  // refersh event tracker
-            changesTracker[0] += "A" // record event order
+            if (eventsTracker[1] === "Fulfilled") { eventsTracker = ['', ''] }  // refersh event tracker
+            eventsTracker[0] += "A" // record event order
             multi_undo_redo = ''  // reset multi redo/undo tracker
             let previousTableData_copy = previousTableData !== undefined ? previousTableData : undefined //keep a copy of current table data
             sheetEventAddress = eventArgs.address
@@ -984,7 +1158,7 @@
                 let tableRange = table.getRange()
                 tableRange.load("rowIndex, columnIndex, rowCount, columnCount, values")
                 let ABA_updatedRange
-                if (changesTracker[0] === "ABA") {
+                if (eventsTracker[0] === "ABA") {
                     ABA_updatedRange = table.worksheet.getRange(tableEventAddress)
                     ABA_updatedRange.load("rowIndex, columnIndex, rowCount, columnCount, values")
                 }
@@ -992,7 +1166,8 @@
                 return ctx.sync().then(() => {
                     if (multi_undo_redo) {return}
 
-                    changesTracker[1] = "Fulfilled"
+                    let rowId_Mapping = pp_eacb_rowIdMapping[workbookGUID + table.name]
+                    eventsTracker[1] = "Fulfilled"
                     previousTableData = tableRange.values // update the previous data
 
                     function getRowChangeStartPosition(arrayA, arrayB) {
@@ -1018,7 +1193,7 @@
                     let rowsGap = previousTableData_copy !== undefined ? tableRange.rowCount - previousTableData_copy.length : undefined
                     let currentTableData = tableRange.values
 
-                    if (changesTracker[0] === "ABA") {
+                    if (eventsTracker[0] === "ABA") {
                         // update the previous table first to prevent wrong start position of row change
                         let startPosition_rowsUpdated = ABA_updatedRange.rowIndex - tableRange.rowIndex
                         let rowsUpdatedCount = ABA_updatedRange.rowCount
@@ -1033,13 +1208,13 @@
                     // quit and let table event listener handle this if redo or undo multiple discontinuous range content change
                     if (sheetEventAddress.includes(",")) {
                         let numberOfRanges = sheetEventAddress.split(",").length
-                        if (changesTracker[0] === "B".repeat(numberOfRanges) + "A"
-                            || "A" + changesTracker[0] === "B".repeat(numberOfRanges)) {
+                        if (eventsTracker[0] === "B".repeat(numberOfRanges) + "A"
+                            || "A" + eventsTracker[0] === "B".repeat(numberOfRanges)) {
                                 return
                         }
-                    } else if (['B', 'BB', 'BBA', 'AB', 'BAB'].includes(changesTracker[0])) {
+                    } else if (['B', 'BB', 'BBA', 'AB', 'BAB'].includes(eventsTracker[0])) {
                         // normal row change operations cannot be multiple continuous undo/redo operations
-                    } else if (['A','AB', 'BA'].includes(changesTracker[0])) {
+                    } else if (['A','AB', 'BA'].includes(eventsTracker[0])) {
                         // reddo and undo case: A, AB and BA, cannot be multiple continuous undo/redo operations
                     }  else {
                         // continue and remark if multiple continuous undo/redo operations
@@ -1056,10 +1231,10 @@
                             return _.isEqual(arrayA_copy, arrayB)
                         }
 
-                        if (changesTracker[0].length === 1) {
+                        if (eventsTracker[0].length === 1) {
                             // single redo or undo operation: A
-                        } else if (changesTracker[0].length === 2) {
-                            if (changesTracker[0] === "AA") {
+                        } else if (eventsTracker[0].length === 2) {
+                            if (eventsTracker[0] === "AA") {
                                 // must be undo or redo multiple continuous row changes if no change in tables content or tables row
                                 if (rowChangeStartPosition === 'equivalent' || rowsGap === 0) {
                                     multi_undo_redo = true
@@ -1069,20 +1244,20 @@
                                     multi_undo_redo = true
                                 }
                             }
-                        } else if (changesTracker[0].length === 3) {
-                            if (changesTracker[0] === "ABA") {
+                        } else if (eventsTracker[0].length === 3) {
+                            if (eventsTracker[0] === "ABA") {
                                 if (rowChangeStartPosition === 'equivalent' || rowsGap === 0) {
                                     multi_undo_redo = true
                                 } else if (!compareTables(previousTableData_copy, currentTableData, rowChangeStartPosition, rowsGap)) {
                                     // if not equal, then must be multiple redo/undo
                                     multi_undo_redo = true
                                 }
-                            } else if (["BAA", "AAA", "AAB"].includes(changesTracker[0])) {
+                            } else if (["BAA", "AAA", "AAB"].includes(eventsTracker[0])) {
                                 // these cases must be multiple....
                                 multi_undo_redo = true
                             }
                         // if symbol length > 4, it must be multiple....
-                        } else if (changesTracker[0].length >= 4) {
+                        } else if (eventsTracker[0].length >= 4) {
                             multi_undo_redo = true
                         }
                     }
@@ -1090,7 +1265,7 @@
                     if (multi_undo_redo) {
                         // replace the existing table because multiple continuous redo/undo operations cannot be splited into individual operation
                         (async () => {
-                            await rowDeletedHandler(1, myTables[table.name].length - 1, table.name)
+                            await rowDeletedHandler(1, rowId_Mapping.length, table.name)
                             rowInsertedHandler(1, currentTableData.length - 1, 0, currentTableData[0].length - 1, table.name, currentTableData)
                         })()
                         
@@ -1099,11 +1274,11 @@
                     }
 
                     // stop if normal row changes case, allows only single undo or redo operation
-                    if (myTables[table.name].length === tableRange.rowCount) {
+                    if (rowId_Mapping.length + 1 === tableRange.rowCount) {
                         // stop the BBA case for normal row addition
                         return
-                    } else if (myTables[table.name].length < tableRange.rowCount &&
-                            (changesTracker[0] === "BAB" || changesTracker[0] === "AB")) {
+                    } else if (rowId_Mapping.length + 1 < tableRange.rowCount &&
+                            (eventsTracker[0] === "BAB" || eventsTracker[0] === "AB")) {
                         // stop the BAB and AB case for normal row addition;
                         return
                     } 
@@ -1120,7 +1295,7 @@
                         startRangeRowRelative = rowChangeStartPosition
                         startRangeColRelative = 0
                         endRangeRowRelative = rowChangeStartPosition + Math.abs(rowsGap) - 1
-                        endRangeColRelative = tableRange.columnCount
+                        endRangeColRelative = startRangeColRelative + tableRange.columnCount - 1
 
                         rowInsertedHandler(startRangeRowRelative, endRangeRowRelative, startRangeColRelative, endRangeColRelative, table.name, currentTableData)
                         console.log(`Row Inserted: [${tableRange.rowIndex + startRangeRowRelative + 1}:${tableRange.rowIndex + endRangeRowRelative + 1}] in '${table.name}' table.`)
@@ -1139,6 +1314,15 @@
             errorHandler(error.message)
         }
 
+    }
+
+    async function hashString(string) {
+        const encoder = new TextEncoder();
+        const data = encoder.encode(string);
+        const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+        const hashArray = Array.from(new Uint8Array(hashBuffer));
+        const hashHex = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+        return hashHex;
     }
 
 
