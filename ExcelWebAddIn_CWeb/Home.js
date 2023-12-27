@@ -746,7 +746,6 @@
     }
 
 
-    let guidPromise
     let undo_redo
     let tableEventAddress
     let sheetEventAddress
@@ -769,37 +768,35 @@
             if (Object.keys(jsonPayLoad).length > 0) {
                 // add the row in memory table as well
                 if (r + 1 > myTables[tableName].length) {
-                    myTables[tableName].push(["", "waiting for guid"])
+                    myTables[tableName].push(["", Create_D365(tableName, jsonPayLoad, "sensei_lessonlearnedid")])
                 } else {
-                    myTables[tableName].splice(r, 0, ["", "waiting for guid"])
+                    myTables[tableName].splice(r, 0, ["", Create_D365(tableName, jsonPayLoad, "sensei_lessonlearnedid")])
                 }
-
-                // Add in P+ table
-                (async function () {
-                    guidPromise = Create_D365(tableName, jsonPayLoad, "sensei_lessonlearnedid");
-                    myTables[tableName][r][1] = await guidPromise
-                })()
             }
         }
     }
-    async function rowDeletedHandler(startRow, endRow, tableName) {
+    function rowDeletedHandler(startRow, endRow, tableName) {
         // collect the row num of the rows deleted
         for (let r = endRow; r >= startRow; r--) {
             //let guidColNum = myTables[table.name][0].indexOf(guidColName)
             let guidColNum = 1
 
-            await guidPromise
-            // delete the rows in P+ table
-            Delete_D365(tableName, myTables[tableName][r][guidColNum])
+            // Ensure the GUID is resolved
+            let guidOrPromise = myTables[tableName][r][guidColNum];
+
+            (async () => {
+                let guid = guidOrPromise instanceof Promise ? await guidOrPromise : guidOrPromise;
+                // delete the rows in P+ table
+                Delete_D365(tableName, guid)
+            })()
+            
             // delete the row in memeory table as well
             myTables[tableName].splice(r, 1)
         }
     }
     // range content change event handler
-    async function rangeChangeHandler(startRow, endRow, startCol, endCol, thisTableData, thisTableName, thisEventArgs) {
+    function rangeChangeHandler(startRow, endRow, startCol, endCol, thisTableData, thisTableName, thisEventArgs) {
         // construct the JSON Payload
-        let jsonPayLoadColl = []
-        let guidColl = []
 
         for (let r = startRow; r <= endRow; r++) {
             let jsonPayLoad = {}
@@ -813,25 +810,23 @@
                 }
             }
             if (Object.keys(jsonPayLoad).length > 0) {
-                jsonPayLoadColl.push(jsonPayLoad)
                 //let guidColNum = myTables[thisTableName][0].indexOf(guidColName)
                 let guidColNum = 1
-                await guidPromise
-                guidColl.push(myTables[thisTableName][r][guidColNum])
-            }
-        }
 
-        // start syncing by sending http request to D365 API
-        if (guidColl.length > 0) {
-            // if range content is unchanged, then do not sync
-            if (thisEventArgs !== undefined && thisEventArgs.details !== undefined
-                && JSON.stringify(thisEventArgs.details.valueAsJsonAfter) === JSON.stringify(thisEventArgs.details.valueAsJsonBefore)) {
-                return
-            }
+                // Ensure the GUID is resolved
+                let guidOrPromise = myTables[thisTableName][r][guidColNum];
 
-            guidColl.forEach((rowGUID, index) => {
-                Update_D365(thisTableName, rowGUID, jsonPayLoadColl[index])
-            })
+                (async () => {
+                    let guid = guidOrPromise instanceof Promise ? await guidOrPromise : guidOrPromise;
+
+                    if (thisEventArgs !== undefined && thisEventArgs.details !== undefined
+                        && JSON.stringify(thisEventArgs.details.valueAsJsonAfter) === JSON.stringify(thisEventArgs.details.valueAsJsonBefore)) {
+                        // if range content is unchanged, then do not sync
+                    } else {
+                        Update_D365(thisTableName, guid, jsonPayLoad)
+                    }
+                })()
+            }
         }
     }
 
@@ -1145,59 +1140,6 @@
         }
 
     }
-
-
-
-
-
-
-    function batRequestTest(entityLogicalName) {
-        //Batch requests can contain up to 1000 individual requests and can't contain other batch requests.
-
-        const boundary = "batch_" + new Date().getTime();
-        const batchUrl = `${resourceDomain}api/data/v9.2/$batch`
-
-        const batchBody =
-            `--${boundary}
-OData-MaxVersion: 4.0,
-OData-Version: 4.0,
-Accept: application/json,
-Content-Type: application/http
-Content-Transfer-Encoding: binary
-
-POST /api/data/v9.2/${entityLogicalName} HTTP/1.1
-Content-Type: application/json;type=entry
-
-{sensei_name: "Batch Request Testing", sensei_lessonlearned: ""}
-
---${boundary}--
-\n\n`;
-
-        //`--${boundary}
-        //Content-Type: application/http
-        //Content-Transfer-Encoding: binary
-
-        //GET /api/data/v9.2/${entityLogicalName} HTTP/1.1
-
-        //--${boundary}--
-        //\n\n`;
-
-        console.log(batchBody)
-
-        fetch(batchUrl, {
-            method: "POST",
-            headers: {
-                'OData-MaxVersion': '4.0',
-                'OData-Version': '4.0',
-                'Accept': 'application/json',
-                'Content-Type': `multipart/mixed;boundary=${boundary}`,
-                'Authorization': `Bearer ${accessToken}`,
-            },
-            body: batchBody
-        })
-
-    }
-
 
 
 })();
