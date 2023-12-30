@@ -203,6 +203,13 @@
                         const existingProperty = customProperties.items.find(prop => prop.key === "Workbook ID");
                         if (existingProperty) {
                             workbookGUID = existingProperty.value
+
+                            if (workbookGUID.split(" - ")[1] === `${properties.creationDate}`) {
+                                "Not a copy"
+                            } else {
+                                "This is a copy"
+                            }
+
                             console.log("Workbook ID retrieved.");
                         } else {
                             workbookGUID = `[${uuid.v4()}] - ${properties.creationDate}`
@@ -211,6 +218,7 @@
                             await context.sync();
                             console.log("Workbook ID created.");
                         }
+                        pp_eacb_rowIdMapping[workbookGUID] = {}
                     });
                 })()
 
@@ -519,8 +527,6 @@
 
             // Resolve all promises and assign the results
             Promise.all(mappingPromises).then(mappingTab => {
-                pp_eacb_rowIdMapping[workbookGUID] = {}
-                tempDict[table.name] = mappingTab
                 pp_eacb_rowIdMapping[workbookGUID][table.name] = mappingTab;
             })
 
