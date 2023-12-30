@@ -519,7 +519,9 @@
 
             // Resolve all promises and assign the results
             Promise.all(mappingPromises).then(mappingTab => {
-                pp_eacb_rowIdMapping[workbookGUID + table.name] = mappingTab;
+                pp_eacb_rowIdMapping[workbookGUID] = {}
+                tempDict[table.name] = mappingTab
+                pp_eacb_rowIdMapping[workbookGUID][table.name] = mappingTab;
             })
 
             const firstRowRange = table.getDataBodyRange().getRow(0).load('formulas');
@@ -916,7 +918,7 @@
     let multi_undo_redo = ''
     // row change events handlers
     function rowInsertedHandler(startRow, endRow, startCol, endCol, tableName, tableData) {
-        let rowId_Mapping = pp_eacb_rowIdMapping[workbookGUID + tableName]
+        let rowId_Mapping = pp_eacb_rowIdMapping[workbookGUID][table.name]
         let promiseArray = [];
 
         for (let r = startRow; r <= endRow; r++) {
@@ -952,7 +954,7 @@
     }
 
     function rowDeletedHandler(startRow, endRow, tableName) {
-        let rowId_Mapping = pp_eacb_rowIdMapping[workbookGUID + tableName]
+        let rowId_Mapping = pp_eacb_rowIdMapping[workbookGUID][table.name]
 
         // collect the row num of the rows deleted
         for (let r = endRow; r >= startRow; r--) {
@@ -972,7 +974,7 @@
     // range content change event handler
     function rangeChangeHandler(startRow, endRow, startCol, endCol, thisTableData, thisTableName, thisEventArgs) {
         // construct the JSON PayloadRowNo_RowGUID_MappingTable
-        let rowId_Mapping = pp_eacb_rowIdMapping[workbookGUID + thisTableName]
+        let rowId_Mapping = pp_eacb_rowIdMapping[workbookGUID][table.name]
 
         for (let r = startRow; r <= endRow; r++) {
             let jsonPayLoad = {};
@@ -1032,7 +1034,7 @@
                 tableRange.load("rowIndex, columnIndex, rowCount, columnCount, values")
 
                 return ctx.sync().then(() => {
-                    let rowId_Mapping = pp_eacb_rowIdMapping[workbookGUID + table.name]
+                    let rowId_Mapping = pp_eacb_rowIdMapping[workbookGUID][table.name]
                     eventsTracker[1] = "Fulfilled"
                     previousTableData = tableRange.values // update the previous data
 
@@ -1166,7 +1168,7 @@
                 return ctx.sync().then(() => {
                     if (multi_undo_redo) {return}
 
-                    let rowId_Mapping = pp_eacb_rowIdMapping[workbookGUID + table.name]
+                    let rowId_Mapping = pp_eacb_rowIdMapping[workbookGUID][table.name]
                     eventsTracker[1] = "Fulfilled"
                     previousTableData = tableRange.values // update the previous data
 
