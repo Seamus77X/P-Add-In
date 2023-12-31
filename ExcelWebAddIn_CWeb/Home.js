@@ -205,9 +205,9 @@
                             workbookGUID = existingProperty.value
 
                             if (workbookGUID.split(" - ")[1] === `${properties.creationDate}`) {
-                                "Not a copy"
+                                console.log("Not a copy")
                             } else {
-                                "This is a copy"
+                                console.log("This is a copy")
                             }
 
                             console.log("Workbook ID retrieved.");
@@ -227,7 +227,7 @@
                 //////////////////////////////////////////////////
                 Office.actions.associate("buttonFunction", function (event) {
                     console.log('Hey, you just pressed a ribbon button.')
-                    //Create_D365('sensei_lessonslearned', { 'sensei_name': 'Add Test', 'sc_additionalcommentsnotes': 'ADD Redo_Undo_Event_Done from Web Add-In' })
+                    Create_D365('sensei_lessonslearned', { 'sensei_name': 'Add Test', 'sc_additionalcommentsnotes': 'ADD Redo_Undo_Event_Done from Web Add-In' })
 
                     console.log(pp_eacb_rowIdMapping)
                     console.log(EntityAttributes)
@@ -923,23 +923,23 @@
     let eventsTracker = ['', '']
     let multi_undo_redo = ''
     // row change events handlers
-    function rowInsertedHandler(startRow, endRow, startCol, endCol, tableName, tableData) {
-        let rowId_Mapping = pp_eacb_rowIdMapping[workbookGUID][table.name]
+    function rowInsertedHandler(startRow, endRow, startCol, endCol, thisTableName, thisTableData) {
+        let rowId_Mapping = pp_eacb_rowIdMapping[workbookGUID][thisTableName]
         let promiseArray = [];
 
         for (let r = startRow; r <= endRow; r++) {
             let jsonPayLoad = {};
             for (let c = startCol; c <= endCol; c++) {
-                let displayColName = tableData[0][c];
-                let mappingEntry = pp_eacb_fieldNameMapping[tableName].find(entry => entry[1] === displayColName);
+                let displayColName = thisTableData[0][c];
+                let mappingEntry = pp_eacb_fieldNameMapping[thisTableName].find(entry => entry[1] === displayColName);
                 if (mappingEntry) {
                     let logicalColName = mappingEntry[0];
-                    jsonPayLoad[logicalColName] = tableData[r][c];
+                    jsonPayLoad[logicalColName] = thisTableData[r][c];
                 }
             }
 
             if (Object.keys(jsonPayLoad).length > 0) {
-                let createD365Promise = Create_D365(tableName, jsonPayLoad, EntityAttributes[tableName]["PrimaryName"])
+                let createD365Promise = Create_D365(thisTableName, jsonPayLoad, EntityAttributes[thisTableName]["PrimaryName"])
                 // update row mapping table
                 let tempID = uuid.v4()
                 if (r - 1 + 1 > rowId_Mapping.length) {
@@ -959,8 +959,8 @@
         }
     }
 
-    function rowDeletedHandler(startRow, endRow, tableName) {
-        let rowId_Mapping = pp_eacb_rowIdMapping[workbookGUID][table.name]
+    function rowDeletedHandler(startRow, endRow, thisTableName) {
+        let rowId_Mapping = pp_eacb_rowIdMapping[workbookGUID][thisTableName]
 
         // collect the row num of the rows deleted
         for (let r = endRow; r >= startRow; r--) {
@@ -970,7 +970,7 @@
             (async () => {
                 let guid = guidOrPromise instanceof Promise ? await guidOrPromise : guidOrPromise;
                 // delete the rows in P+ table
-                Delete_D365(tableName, guid)
+                Delete_D365(thisTableName, guid)
             })()
             
             // delete the row in memeory table as well
@@ -980,7 +980,7 @@
     // range content change event handler
     function rangeChangeHandler(startRow, endRow, startCol, endCol, thisTableData, thisTableName, thisEventArgs) {
         // construct the JSON PayloadRowNo_RowGUID_MappingTable
-        let rowId_Mapping = pp_eacb_rowIdMapping[workbookGUID][table.name]
+        let rowId_Mapping = pp_eacb_rowIdMapping[workbookGUID][thisTableName]
 
         for (let r = startRow; r <= endRow; r++) {
             let jsonPayLoad = {};
@@ -1157,7 +1157,7 @@
             if (eventsTracker[1] === "Fulfilled") { eventsTracker = ['', ''] }  // refersh event tracker
             eventsTracker[0] += "A" // record event order
             multi_undo_redo = ''  // reset multi redo/undo tracker
-            let previousTableData_copy = previousTableData !== undefined ? previousTableData : undefined //keep a copy of current table data
+            let previousTableData_copy = previousTableData //keep a copy of current table data
             sheetEventAddress = eventArgs.address
 
             Excel.run(function (ctx) {
@@ -1271,13 +1271,13 @@
                     }
 
                     if (multi_undo_redo) {
-                        // replace the existing table because multiple continuous redo/undo operations cannot be splited into individual operation
-                        (async () => {
-                            await rowDeletedHandler(1, rowId_Mapping.length, table.name)
+                        if (_.isEqual(previousTableData_copy, currentTableData) === false) {
+                            // replace the existing table because multiple continuous redo/undo operations cannot be splited into individual operation
+                            rowDeletedHandler(1, rowId_Mapping.length, table.name)
                             rowInsertedHandler(1, currentTableData.length - 1, 0, currentTableData[0].length - 1, table.name, currentTableData)
-                        })()
-                        
-                        console.log(`Multiple continuous undo or redo operations detected: The whole '${table.name}' table is updated.`);
+
+                            console.log(`Multiple continuous undo or redo operations detected: The whole '${table.name}' table is updated.`);
+                        }
                         return 
                     }
 
