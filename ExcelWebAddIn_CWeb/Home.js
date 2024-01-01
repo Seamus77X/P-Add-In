@@ -125,9 +125,6 @@
                     });
                 }
 
-                
-
-
                 //////////////////////////////////////////////////
                 // Initialise Add-In taskpane page
                 //////////////////////////////////////////////////
@@ -305,13 +302,24 @@
                 // Add function to Excel ribbon buttons
                 //////////////////////////////////////////////////
 
-
+                Office.context.document.getFilePropertiesAsync(function (asyncResult) {
+                    const fileUrl = asyncResult.value.url;
+                    if (fileUrl == "") {
+                        console.log("The file hasn't been saved yet. Save the file and try again");
+                    }
+                    else {
+                        console.log(fileUrl);
+                    }
+                });
+                console.log("Hi")
                 Office.actions.associate("buttonFunction", function (event) {
                     console.log('Hey, you just pressed a ribbon button.')
                     //Create_D365('sensei_lessonslearned', { 'sensei_name': 'Add Test', 'sc_additionalcommentsnotes': 'ADD Redo_Undo_Event_Done from Web Add-In' })
 
                     console.log(pp_eacb_rowIdMapping)
                     console.log(EntityAttributes)
+                    
+
 
                     event.completed();
                 })
