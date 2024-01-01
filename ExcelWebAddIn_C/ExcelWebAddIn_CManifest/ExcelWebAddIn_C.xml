@@ -37,7 +37,7 @@
 	</Hosts>
 	<DefaultSettings>
 		<!--<SourceLocation DefaultValue="https://seamus77x.github.io/P-Add-In/ExcelWebAddIn_CWeb/Home.html" />-->
-		<SourceLocation DefaultValue="~remoteAppUrl/Home.html" />
+		<SourceLocation DefaultValue="https://seamus77x.github.io/P-Add-In/ExcelWebAddIn_CWeb/Home.html" />
 	</DefaultSettings>
 	<!-- End TaskPane Mode integration.  -->
 
@@ -148,7 +148,7 @@
 			</bt:Images>
 			<bt:Urls>
 				<!--<bt:Url id="KBR.Taskpane.Url" DefaultValue="https://seamus77x.github.io/P-Add-In/ExcelWebAddIn_CWeb/Home.html" />-->
-				<bt:Url id="KBR.Taskpane.Url" DefaultValue="~remoteAppUrl/Home.html" />
+				<bt:Url id="KBR.Taskpane.Url" DefaultValue="https://seamus77x.github.io/P-Add-In/ExcelWebAddIn_CWeb/Home.html" />
 				<bt:Url id="KBR.GetStarted.LearnMoreUrl" DefaultValue="https://kbrcorpau.sharepoint.com/:l:/r/sites/IQ_General_Users.O.AINF.IN.CI.AU.Team/Lists/Issue%20tracking?e=bJ8Srg" />
 			</bt:Urls>
 			<!-- ShortStrings max characters==125. -->
