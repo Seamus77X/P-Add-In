@@ -37,7 +37,7 @@ body {
 }
 
 
-@keyframes flowingWater {
+/*@keyframes flowingWater {
     0% {
         background-position: 100% 50%;
     }
@@ -48,29 +48,29 @@ body {
 }
 
 .progress-container {
-    width: 80%; /* relative width to the full addin page */
-    height: 30px; /* Fixed height */
+    width: 80%;*/ /* relative width to the full addin page */
+    /*height: 30px;*/ /* Fixed height */
 
-    margin: auto; /* Centering horizontally */
-    position: relative; /* Relative positioning */
-    bottom: 30%; /* Positioning from the bottom */
+    /*margin: auto;*/ /* Centering horizontally */
+    /*position: relative;*/ /* Relative positioning */
+    /*bottom: 30%;*/ /* Positioning from the bottom */
 
-    border-radius: 3px; /* Rounded corners */
-    border: 2px solid #87CEEB; /* Adding a border for 3D frame effect */
-    background-color: #f0f0f0; /* Light background for the container */
-    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2); /* Shadow for 3D effect */
-}
+    /*border-radius: 3px;*/ /* Rounded corners */
+    /*border: 2px solid #87CEEB;*/ /* Adding a border for 3D frame effect */
+    /*background-color: #f0f0f0;*/ /* Light background for the container */
+    /*box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);*/ /* Shadow for 3D effect */
+/*}
 
 .progress-bar {
-    width: 0%; /* Initial width, adjust based on progress */
-    height: 30px; /* Height of the bar */
+    width: 0%;*/ /* Initial width, adjust based on progress */
+    /*height: 30px;*/ /* Height of the bar */
 
-    text-align: center;
-    line-height: 30px; /* Center text vertically */
-    color: white;
+    /*text-align: center;
+    line-height: 30px;*/ /* Center text vertically */
+    /*color: white;
     background-color: #87CEEB;
     background-image: linear-gradient(90deg, #87CEEB 25%, #B0E0E6 50%, #87CEEB 75%);
-    background-size: 400% 100%;
+    background-size: 400% 100%;*/
     /* Updated animation */
-    animation: flowingWater 2s linear infinite;
-}
+    /*animation: flowingWater 2s linear infinite;
+}*/
