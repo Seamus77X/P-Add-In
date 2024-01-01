@@ -20,7 +20,7 @@
 	<DisplayName DefaultValue="PortfolioPlus Integration Add-in" />
 	<Description DefaultValue="Data link between P+ and EACBOL" />
 	<!-- Icon for your add-in. Used on installation screens and the add-ins dialog. -->
-	<IconUrl DefaultValue="https://seamus77x.github.io/P-Add-In/ExcelWebAddIn_CWeb/Images/P+_32.png" />
+	<IconUrl DefaultValue="https://seamus77x.github.io/P-Add-In/ExcelWebAddIn_CWeb/Images/AddinIcon.png" />
 	<HighResolutionIconUrl DefaultValue="https://seamus77x.github.io/P-Add-In/ExcelWebAddIn_CWeb/Images/P+_80.png" />
 
 	<SupportUrl DefaultValue="http://www.contoso.com" />
