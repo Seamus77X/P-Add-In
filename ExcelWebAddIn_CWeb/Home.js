@@ -512,13 +512,13 @@
             const lookupFields = mappingArray
                 .filter(row => pattern.test(row[0]))
                 .map(row => row[0].replace(/^_/, '').replace(/_value$/, ''));
-
+                // build url
             entityPath = "RelationshipDefinitions/Microsoft.Dynamics.CRM.OneToManyRelationshipMetadata"
             selectArr = ['ReferencingEntityNavigationPropertyName', 'ReferencedEntity', 'ReferencedAttribute']
             filterArr = lookupFields.map(field => `ReferencingAttribute eq '${field}'`);
             selectCondition = `?$select=${selectArr.join(',')}`
             filterCondition = `&$filter=ReferencingEntity eq '${EntityLogicalName}' and (${filterArr.join(' or ')})`
-
+                // get mapping info
             url = `${resourceDomain}api/data/v9.2/${entityPath}${selectCondition}${filterCondition}`
             thePromises.push(Read_D365(url).then((result) => {
                 let excludedCols_index = ['MetadataId'].map(fieldName => result[0].indexOf(fieldName))
@@ -532,7 +532,7 @@
                 entityPath = 'EntityDefinitions'
                 selectCondition = '?$select=LogicalName,EntitySetName'
                 filterCondition = `&$filter=${filterArr.join(' or ') }`
-
+                // get EntitySetName
                 url = `${resourceDomain}api/data/v9.2/${entityPath}${selectCondition}${filterCondition}&LabelLanguages=1033`
                 Read_D365(url).then((result) => {
                     let entitySetName_index = result[0].indexOf("EntitySetName")
