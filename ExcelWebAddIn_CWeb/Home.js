@@ -7,13 +7,15 @@
     let messageBanner;
     let accessToken;  // used to store user's access token
     let runningEnvir
-    let pp_eacb_rowIdMapping = { }
+    let ThisWorkbook_GUID
+    let pp_eacb_rowIdMapping = {}
     let pp_eacb_fieldNameMapping = {
         'sensei_lessonslearned': [
             ["sensei_lessonlearnedid", "Row ID"],
             ["modifiedon", "Entry Date"],
             ["sensei_name", "Title"],
             ["sensei_category", "Category"],
+            ["_sc_discipline_value", "Discipline"],
             ["sensei_lessonlearned", "Detailed Description"],
             ["sc_projectimpact", "Project Impact"],
             ["sensei_observation", "When is it likely to occur/when did it occur"],
@@ -36,7 +38,6 @@
 
         $(function () {
             try {
-
                 //////////////////////////////////////////////////
                 // Settting: auto open add-in and show taskpane once the add-in is manually opened bu a user
                 //////////////////////////////////////////////////
@@ -47,83 +48,6 @@
                 Office.addin.showAsTaskpane();
                 //Office.addin.hide();
                 //Office.addin.setStartupBehavior(Office.StartupBehavior.none);
-
-                // Enable the before document close modal notification dialog.
-                Office.addin.beforeDocumentCloseNotification.enable()
-                Office.addin.beforeDocumentCloseNotification.onCloseActionCancelled(
-                    async function updateOrAddCustomXmlPart(dataObject = pp_eacb_rowIdMapping, xmlPart_settingKey = "xmlPartId") {
-                        await Excel.run(async (context) => {
-                            const ns = 'http://schemas.kbr.com/syncinfo.com';
-                            let xmlData = `<Tables xmlns='${ns}'>`;
-                            for (const [key, table] of Object.entries(dataObject)) {
-                                xmlData += `<Table name="${key}">${table.map(row =>
-                                    `<Row>${row.map(cell => `<Cell>${cell}</Cell>`).join('')}</Row>`
-                                ).join('')}</Table>`;
-                            }
-                            xmlData += '</Tables>';
-
-                            const settings = context.workbook.settings;
-                            const xmlPartIdSetting = settings.getItemOrNullObject(xmlPart_settingKey);
-                            xmlPartIdSetting.load('value');
-                            await context.sync();
-
-                            let customXmlPart;
-                            if (!xmlPartIdSetting.isNullObject) {
-                                // XML part exists, retrieve and update it
-                                customXmlPart = context.workbook.customXmlParts.getItem(xmlPartIdSetting.value);
-                                customXmlPart.getXml();
-                                customXmlPart.setXml(xmlData);
-                            } else {
-                                // XML part does not exist, add a new one
-                                customXmlPart = context.workbook.customXmlParts.add(xmlData);
-                                customXmlPart.load("id");
-                                await context.sync();
-
-                                // Store the new XML part's ID in settings
-                                settings.add(xmlPart_settingKey, customXmlPart.id);
-                            }
-
-                            await context.sync();
-                        }).catch(error => {
-                            console.error(error);
-                        });
-                    }
-                );
-
-                console.log(readCustomXmlPartAsObject("xmlPartId"))
-                function readCustomXmlPartAsObject(xmlPart_settingKey) {
-                    return Excel.run(async (context) => {
-                        const settings = context.workbook.settings;
-                        const settingItem = settings.getItemOrNullObject(xmlPart_settingKey);
-                        settingItem.load('value');
-
-                        await context.sync();
-
-                        if (!settingItem.isNullObject) {
-                            const customXmlPart = context.workbook.customXmlParts.getItem(settingItem.value);
-                            let customXmlValue = customXmlPart.getXml();
-                            await context.sync();
-
-                            const parser = new DOMParser();
-                            const xmlDoc = parser.parseFromString(customXmlValue.value, "text/xml");
-                            const tables = xmlDoc.getElementsByTagName("Table");
-                            let dataObject = {};
-
-                            for (const table of tables) {
-                                const tableName = table.getAttribute("name");
-                                const rows = table.getElementsByTagName("Row");
-                                dataObject[tableName] = Array.from(rows).map(row => {
-                                    return Array.from(row.getElementsByTagName("Cell")).map(cell => cell.textContent);
-                                });
-                            }
-                            return dataObject;
-                        } else {
-                            return false;
-                        }
-                    }).catch(error => {
-                        console.error(error);
-                    });
-                }
 
                 //////////////////////////////////////////////////
                 // Initialise Add-In taskpane page
@@ -264,62 +188,52 @@
                 //////////////////////////////////////////////////
                 // Register the workbook
                 //////////////////////////////////////////////////
-                //(async () => {
-                //    Excel.run(async (context) => {
-                //        const workbook = context.workbook;
-                //        const properties = workbook.properties;
-                //        const customProperties = properties.custom;
-
-                //        properties.load('creationDate');
-                //        customProperties.load("items/key, items/value");
-
-                //        await context.sync();
-
-                //        // Check if the property already exists
-                //        const existingProperty = customProperties.items.find(prop => prop.key === "Workbook ID");
-                //        if (existingProperty) {
-                //            workbookGUID = existingProperty.value
-
-                //            if (workbookGUID.split(" - ")[1] === `${properties.creationDate}`) {
-                //                console.log("Not a copy")
-                //            } else {
-                //                console.log("This is a copy")
-                //            }
-
-                //            console.log("Workbook ID retrieved.");
-                //        } else {
-                //            workbookGUID = `[${uuid.v4()}] - ${properties.creationDate}`
-                //            customProperties.add("Workbook ID", workbookGUID); // Add new property
-
-                //            await context.sync();
-                //            console.log("Workbook ID created.");
-                //        }
-                //        pp_eacb_rowIdMapping[workbookGUID] = {}
-                //    });
-                //})()
-
-                //////////////////////////////////////////////////
-                // Add function to Excel ribbon buttons
-                //////////////////////////////////////////////////
-
                 Office.context.document.getFilePropertiesAsync(function (asyncResult) {
-                    const fileUrl = asyncResult.value.url;
-                    if (fileUrl == "") {
+                    const fileUrl = asyncResult.value !== undefined ? asyncResult.value.url : ""
+                    if (fileUrl === "") {
                         console.log("The file hasn't been saved yet. Save the file and try again");
+                        return
                     }
                     else {
                         console.log(fileUrl);
                     }
+
+                    Excel.run(async (ctx) => {
+                        const settings = ctx.workbook.settings
+                        const workbookGUID = settings.getItemOrNullObject("ThisWorkbook_GUID");
+                        workbookGUID.load('value');
+
+                        await ctx.sync();
+
+                        if (!workbookGUID.isNullObject) {
+                            ThisWorkbook_GUID = workbookGUID.value
+
+                            if (ThisWorkbook_GUID.split(" - ")[1] === `${fileUrl}`) {
+                                console.log("Not a copy")
+                            } else {
+                                // update guid
+                                ThisWorkbook_GUID = `${ThisWorkbook_GUID.split(" - ")[0]} - ${fileUrl}`
+                                settings.add("ThisWorkbook_GUID", ThisWorkbook_GUID)
+                                console.log("This is a copy")
+                            }
+                        } else {
+                            ThisWorkbook_GUID = `[${uuid.v4()}] - ${fileUrl}`
+                            settings.add("ThisWorkbook_GUID", ThisWorkbook_GUID)
+                            console.log("first time use of add-in in this workbook")
+                        }
+                        await ctx.sync();
+                    });
                 });
-                console.log("Hi")
+
+                //////////////////////////////////////////////////
+                // Add function to Excel ribbon buttons
+                //////////////////////////////////////////////////
                 Office.actions.associate("buttonFunction", function (event) {
                     console.log('Hey, you just pressed a ribbon button.')
                     //Create_D365('sensei_lessonslearned', { 'sensei_name': 'Add Test', 'sc_additionalcommentsnotes': 'ADD Redo_Undo_Event_Done from Web Add-In' })
 
                     console.log(pp_eacb_rowIdMapping)
                     console.log(EntityAttributes)
-                    
-
 
                     event.completed();
                 })
@@ -350,153 +264,153 @@
     }
 
 
-    // Function to retrieve data from Dynamics 365
-    async function loadDaaata(resourceUrl, tableName, FirstDataColumnIndex = 1, defaultSheet = 'Sheet1', defaultTpLeftRng = 'A1', excludedColsNames = ['@odata.etag']) {
-        try {
-            let DataArr = await Read_D365(resourceUrl);
+    //// Function to retrieve data from Dynamics 365
+    //async function loadDaaata(resourceUrl, tableName, FirstDataColumnIndex = 1, defaultSheet = 'Sheet1', defaultTpLeftRng = 'A1', excludedColsNames = ['@odata.etag']) {
+    //    try {
+    //        let DataArr = await Read_D365(resourceUrl);
 
-            // act as the corresponding table in memory, which records the change in Excel table
-            pp_eacb_rowIdMapping[tableName] = _.cloneDeep(DataArr)
+    //        // act as the corresponding table in memory, which records the change in Excel table
+    //        pp_eacb_rowIdMapping[tableName] = _.cloneDeep(DataArr)
 
-            //if (DataArr.length === 0) {return}
+    //        //if (DataArr.length === 0) {return}
 
-            // delete unwanted cols from the array which is going to be pasted into Excel
-            let colIndices = excludedColsNames.map(colName => DataArr[0].indexOf(colName)).filter(index => index !== -1);
-            // Sort the indices in descending order to avoid index shifting issues during removal
-            colIndices.sort((a, b) => b - a);
-            // Remove the columns with the found indices
-            DataArr.map(row => {
-                colIndices.forEach(colIndex => row.splice(colIndex, 1));
-            });
-            // report an error and interupt if failed to read data from Dataverse
-            if (!DataArr || DataArr.length === 0) {
-                throw new Error("No data retrieved or data array is empty");
-            }
-            // paste data into Excel worksheet 
-            await Excel.run(async (ctx) => {
-                const ThisWorkbook = ctx.workbook;
-                const Worksheets = ThisWorkbook.worksheets;
-                Worksheets.load("items/tables/items/name");
+    //        // delete unwanted cols from the array which is going to be pasted into Excel
+    //        let colIndices = excludedColsNames.map(colName => DataArr[0].indexOf(colName)).filter(index => index !== -1);
+    //        // Sort the indices in descending order to avoid index shifting issues during removal
+    //        colIndices.sort((a, b) => b - a);
+    //        // Remove the columns with the found indices
+    //        DataArr.map(row => {
+    //            colIndices.forEach(colIndex => row.splice(colIndex, 1));
+    //        });
+    //        // report an error and interupt if failed to read data from Dataverse
+    //        if (!DataArr || DataArr.length === 0) {
+    //            throw new Error("No data retrieved or data array is empty");
+    //        }
+    //        // paste data into Excel worksheet 
+    //        await Excel.run(async (ctx) => {
+    //            const ThisWorkbook = ctx.workbook;
+    //            const Worksheets = ThisWorkbook.worksheets;
+    //            Worksheets.load("items/tables/items/name");
 
-                await ctx.sync();
+    //            await ctx.sync();
 
-                let tableFound = false;
-                let table;
-                let oldRangeAddress;
-                let oldFirstRow_formula
-                let sheet
+    //            let tableFound = false;
+    //            let table;
+    //            let oldRangeAddress;
+    //            let oldFirstRow_formula
+    //            let sheet
 
-                if (tableName !== 'not using a table') {
+    //            if (tableName !== 'not using a table') {
 
-                    // Attempt to find the existing table.
-                    for (sheet of Worksheets.items) {
-                        const tables = sheet.tables;
+    //                // Attempt to find the existing table.
+    //                for (sheet of Worksheets.items) {
+    //                    const tables = sheet.tables;
 
-                        // Check if the table exists in the current sheet
-                        table = tables.items.find(t => t.name === tableName);
+    //                    // Check if the table exists in the current sheet
+    //                    table = tables.items.find(t => t.name === tableName);
 
-                        // if the table found, delete the existing data
-                        if (table) {
-                            tableFound = true;
-                            // Clear the data body range.
-                            const dataBodyRange = table.getDataBodyRange();
-                            dataBodyRange.load("address");
-                            let firstRow = dataBodyRange.getRow(0);
-                            firstRow.load('formulas');
+    //                    // if the table found, delete the existing data
+    //                    if (table) {
+    //                        tableFound = true;
+    //                        // Clear the data body range.
+    //                        const dataBodyRange = table.getDataBodyRange();
+    //                        dataBodyRange.load("address");
+    //                        let firstRow = dataBodyRange.getRow(0);
+    //                        firstRow.load('formulas');
 
-                            dataBodyRange.clear();
-                            await ctx.sync();
-                            // Load the address of the range for new data insertion.
-                            oldRangeAddress = dataBodyRange.address.split('!')[1];
-                            oldFirstRow_formula = firstRow.formulas;
-                            break;
-                        }
-                    }
+    //                        dataBodyRange.clear();
+    //                        await ctx.sync();
+    //                        // Load the address of the range for new data insertion.
+    //                        oldRangeAddress = dataBodyRange.address.split('!')[1];
+    //                        oldFirstRow_formula = firstRow.formulas;
+    //                        break;
+    //                    }
+    //                }
 
-                    if (tableFound) {
-                        // Situation 1: If the table exists, update existing one
-                        // delete header row of DataArr
-                        DataArr.shift()
+    //                if (tableFound) {
+    //                    // Situation 1: If the table exists, update existing one
+    //                    // delete header row of DataArr
+    //                    DataArr.shift()
 
-                        // add LHS and RHS formula cols to expand dataArr
-                        let excelTableRightColNo = columnNameToNumber(oldRangeAddress.split(":")[1].replace(/\d+$/, ''))
-                        let ppTableRightColNo = columnNameToNumber(oldRangeAddress.split(":")[0].replace(/\d+$/, '')) + FirstDataColumnIndex - 1 + DataArr[0].length - 1
-                        DataArr.forEach(row => {
-                            if (FirstDataColumnIndex > 1) {
-                                let tempRowFormula = oldFirstRow_formula
-                                row.unshift(...tempRowFormula[0].slice(0, FirstDataColumnIndex - 1))
-                            }
+    //                    // add LHS and RHS formula cols to expand dataArr
+    //                    let excelTableRightColNo = columnNameToNumber(oldRangeAddress.split(":")[1].replace(/\d+$/, ''))
+    //                    let ppTableRightColNo = columnNameToNumber(oldRangeAddress.split(":")[0].replace(/\d+$/, '')) + FirstDataColumnIndex - 1 + DataArr[0].length - 1
+    //                    DataArr.forEach(row => {
+    //                        if (FirstDataColumnIndex > 1) {
+    //                            let tempRowFormula = oldFirstRow_formula
+    //                            row.unshift(...tempRowFormula[0].slice(0, FirstDataColumnIndex - 1))
+    //                        }
 
-                            if (excelTableRightColNo > ppTableRightColNo) {
-                                let tempRowFormula = oldFirstRow_formula
-                                row.push(...tempRowFormula[0].slice(ppTableRightColNo - excelTableRightColNo))
-                            }
-                        })
+    //                        if (excelTableRightColNo > ppTableRightColNo) {
+    //                            let tempRowFormula = oldFirstRow_formula
+    //                            row.push(...tempRowFormula[0].slice(ppTableRightColNo - excelTableRightColNo))
+    //                        }
+    //                    })
 
-                        let newRangeAdress = oldRangeAddress.replace(/\d+$/, parseInt(oldRangeAddress.match(/\d+/)[0], 10) + DataArr.length - 1)
-                        let range = sheet.getRange(newRangeAdress);
+    //                    let newRangeAdress = oldRangeAddress.replace(/\d+$/, parseInt(oldRangeAddress.match(/\d+/)[0], 10) + DataArr.length - 1)
+    //                    let range = sheet.getRange(newRangeAdress);
 
-                        if (runningEnvir !== Office.PlatformType.OfficeOnline) {
-                            range.values = DataArr;
-                        } else {
-                            pasteChunksToExcel(splitArrayIntoSmallPieces(DataArr), newRangeAdress, sheet, ctx)
-                        }
+    //                    if (runningEnvir !== Office.PlatformType.OfficeOnline) {
+    //                        range.values = DataArr;
+    //                    } else {
+    //                        pasteChunksToExcel(splitArrayIntoSmallPieces(DataArr), newRangeAdress, sheet, ctx)
+    //                    }
 
-                        // include header row when resize
-                        let newRangeAdressWithHeader = newRangeAdress.replace(/\d+/, oldRangeAddress.match(/\d+/)[0] - 1)
-                        let WholeTableRange = sheet.getRange(newRangeAdressWithHeader)
-                        table.resize(WholeTableRange)
+    //                    // include header row when resize
+    //                    let newRangeAdressWithHeader = newRangeAdress.replace(/\d+/, oldRangeAddress.match(/\d+/)[0] - 1)
+    //                    let WholeTableRange = sheet.getRange(newRangeAdressWithHeader)
+    //                    table.resize(WholeTableRange)
 
-                        range.format.autofitColumns();
-                        range.format.autofitRows();
-                    } else {
-                        // Situation 2: If the table doesn't exist, create a new one.
-                        let tgtSheet = Worksheets.getItem(defaultSheet);
-                        let endCellCol = columnNumberToName(columnNameToNumber(defaultTpLeftRng.replace(/\d+$/, "")) - 1 + DataArr[0].length)
-                        let endCellRow = parseInt(defaultTpLeftRng.match(/\d+$/)[0], 10) + DataArr.length - 1
-                        let rangeAddress = defaultTpLeftRng + ":" + endCellCol + endCellRow;
-                        let range = tgtSheet.getRange(rangeAddress);
+    //                    range.format.autofitColumns();
+    //                    range.format.autofitRows();
+    //                } else {
+    //                    // Situation 2: If the table doesn't exist, create a new one.
+    //                    let tgtSheet = Worksheets.getItem(defaultSheet);
+    //                    let endCellCol = columnNumberToName(columnNameToNumber(defaultTpLeftRng.replace(/\d+$/, "")) - 1 + DataArr[0].length)
+    //                    let endCellRow = parseInt(defaultTpLeftRng.match(/\d+$/)[0], 10) + DataArr.length - 1
+    //                    let rangeAddress = defaultTpLeftRng + ":" + endCellCol + endCellRow;
+    //                    let range = tgtSheet.getRange(rangeAddress);
 
-                        if (runningEnvir !== Office.PlatformType.OfficeOnline) {
-                            range.values = DataArr;
-                        } else {
-                            pasteChunksToExcel(splitArrayIntoSmallPieces(DataArr), rangeAddress, tgtSheet, ctx)
-                        }
+    //                    if (runningEnvir !== Office.PlatformType.OfficeOnline) {
+    //                        range.values = DataArr;
+    //                    } else {
+    //                        pasteChunksToExcel(splitArrayIntoSmallPieces(DataArr), rangeAddress, tgtSheet, ctx)
+    //                    }
 
-                        let newTable = tgtSheet.tables.add(rangeAddress, true /* hasHeaders */);
-                        newTable.name = tableName;
+    //                    let newTable = tgtSheet.tables.add(rangeAddress, true /* hasHeaders */);
+    //                    newTable.name = tableName;
 
-                        newTable.getRange().format.autofitColumns();
-                        newTable.getRange().format.autofitRows();
-                    }
+    //                    newTable.getRange().format.autofitColumns();
+    //                    newTable.getRange().format.autofitRows();
+    //                }
 
-                } else {
-                    // Situation 3: paste the data in sheet directly, no table format
-                    let tgtSheet = Worksheets.getItem(defaultSheet);
-                    let endCellCol = columnNumberToName(columnNameToNumber(defaultTpLeftRng.replace(/\d+$/, "")) - 1 + DataArr[0].length)
-                    let endCellRow = parseInt(defaultTpLeftRng.match(/\d+$/)[0], 10) + DataArr.length - 1
-                    let rangeAddress = defaultTpLeftRng + ":" + endCellCol + endCellRow;
-                    let range = tgtSheet.getRange(rangeAddress);
+    //            } else {
+    //                // Situation 3: paste the data in sheet directly, no table format
+    //                let tgtSheet = Worksheets.getItem(defaultSheet);
+    //                let endCellCol = columnNumberToName(columnNameToNumber(defaultTpLeftRng.replace(/\d+$/, "")) - 1 + DataArr[0].length)
+    //                let endCellRow = parseInt(defaultTpLeftRng.match(/\d+$/)[0], 10) + DataArr.length - 1
+    //                let rangeAddress = defaultTpLeftRng + ":" + endCellCol + endCellRow;
+    //                let range = tgtSheet.getRange(rangeAddress);
 
-                    if (runningEnvir !== Office.PlatformType.OfficeOnline) {
-                        range.values = DataArr;
-                    } else {
-                        pasteChunksToExcel(splitArrayIntoSmallPieces(DataArr), rangeAddress, tgtSheet, ctx)
-                    }
+    //                if (runningEnvir !== Office.PlatformType.OfficeOnline) {
+    //                    range.values = DataArr;
+    //                } else {
+    //                    pasteChunksToExcel(splitArrayIntoSmallPieces(DataArr), rangeAddress, tgtSheet, ctx)
+    //                }
 
-                    range.format.autofitColumns();
-                    range.format.autofitRows();
-                }
+    //                range.format.autofitColumns();
+    //                range.format.autofitRows();
+    //            }
 
-                await ctx.sync();
-            })  // end of pasting data
-        } catch (error) {
-            errorHandler(error.message)
-        } finally {
-            // add listener to the table if no listener
-            registerTableChangeEvent(tableName)
-        }
-    }
+    //            await ctx.sync();
+    //        })  // end of pasting data
+    //    } catch (error) {
+    //        errorHandler(error.message)
+    //    } finally {
+    //        // add listener to the table if no listener
+    //        registerTableChangeEvent(tableName)
+    //    }
+    //}
 
 
     async function loadData(validTables) {
@@ -532,7 +446,7 @@
             let entityPath
             let url
             let mappingArray = pp_eacb_fieldNameMapping[table.name];
-            let tablePromises = []
+            let thePromises = []
 
             // get Logical Name of the table
             entityPath = 'EntityDefinitions'
@@ -553,7 +467,7 @@
             filterCondition = `&$filter=${filterArr.join(' or ')}`
             
             url = `${resourceDomain}api/data/v9.2/${entityPath}${selectCondition}${filterCondition}&LabelLanguages=1033`;
-            tablePromises.push(Read_D365(url).then((result) => {
+            thePromises.push(Read_D365(url).then((result) => {
                 let IsPrimaryId_colNo = result[0].indexOf('IsPrimaryId')
                 let LogicalName_colNo = result[0].indexOf('LogicalName')
                 let primaryIdRow = result.find(row => row[IsPrimaryId_colNo] === true)
@@ -562,7 +476,7 @@
                 let excludedCols_index = ['MetadataId', '@odata.type', 'IsPrimaryId', 'IsPrimaryName'].map(fieldName => result[0].indexOf(fieldName))
                 let properties = result.map(row => row.filter((item, index) => !excludedCols_index.includes(index)))
 
-                EntityAttributes[table.name]["PrimaryName"] = primaryColName
+                EntityAttributes[table.name]["PrimaryID"] = primaryColName
                 EntityAttributes[table.name]["EntityDefinitions"] = properties
             }))
 
@@ -573,7 +487,7 @@
             expandCondition = `&$expand=GlobalOptionSet($select=Options)` 
 
             url = `${resourceDomain}api/data/v9.2/${entityPath}${selectCondition}${expandCondition}&LabelLanguages=1033`;
-            tablePromises.push(Read_D365(url).then((result) => {
+            thePromises.push(Read_D365(url).then((result) => {
                 let thisPickList = {}
 
                 let headerRow = result.shift()
@@ -593,24 +507,75 @@
                 EntityAttributes[table.name]["PickLists"] = thisPickList
             }))
 
+            // get lookup fields info
+            const pattern = /^_.*_value$/;
+            const lookupFields = mappingArray
+                .filter(row => pattern.test(row[0]))
+                .map(row => row[0].replace(/^_/, '').replace(/_value$/, ''));
+
+            entityPath = "RelationshipDefinitions/Microsoft.Dynamics.CRM.OneToManyRelationshipMetadata"
+            selectArr = ['ReferencingEntityNavigationPropertyName', 'ReferencedEntity', 'ReferencedAttribute']
+            filterArr = lookupFields.map(field => `ReferencingAttribute eq '${field}'`);
+            selectCondition = `?$select=${selectArr.join(',')}`
+            filterCondition = `&$filter=ReferencingEntity eq '${EntityLogicalName}' and (${filterArr.join(' or ')})`
+
+            url = `${resourceDomain}api/data/v9.2/${entityPath}${selectCondition}${filterCondition}`
+            thePromises.push(Read_D365(url).then((result) => {
+                let excludedCols_index = ['MetadataId'].map(fieldName => result[0].indexOf(fieldName))
+                let lookupInfo = result.map(row => row.filter((item, index) => !excludedCols_index.includes(index)))
+                return lookupInfo
+            }).then((lookupInfo) => {
+                let lookupInfo_copy = _.cloneDeep(lookupInfo)
+                let colIndex = lookupInfo_copy.shift().indexOf('ReferencedEntity')
+                filterArr = lookupInfo_copy.map(fieldInfo => `LogicalName eq '${fieldInfo[colIndex]}'`)
+
+                entityPath = 'EntityDefinitions'
+                selectCondition = '?$select=LogicalName,EntitySetName'
+                filterCondition = `&$filter=${filterArr.join(' or ') }`
+
+                url = `${resourceDomain}api/data/v9.2/${entityPath}${selectCondition}${filterCondition}&LabelLanguages=1033`
+                Read_D365(url).then((result) => {
+                    let entitySetName_index = result[0].indexOf("EntitySetName")
+                    let entityLogicalName_index = result[0].indexOf("LogicalName")
+                    result.shift()
+
+                    let dict = {}
+                    result.map(fieldInfo => {
+                        dict[fieldInfo[entityLogicalName_index]] = fieldInfo[entitySetName_index]
+                    })
+
+                    lookupInfo.forEach((row, index) => {
+                        if (index === 0) {
+                            row.push("ReferencedEntity_SetName")
+                        } else {
+                            row.push(
+                                dict[row[lookupInfo[0].indexOf('ReferencedEntity')]]
+                            )
+                        }
+                    })
+                    EntityAttributes[table.name]["LookupRelationshipInfo"] = lookupInfo
+                })
+            }))
+            
+
             // get P+ table
             entityPath = table.name
             selectCondition = `?$select=${mappingArray.map(entry => entry[0]).join(',')}`;
             url = `${resourceDomain}api/data/v9.2/${entityPath}${selectCondition}`;
-            tablePromises.push(Read_D365(url))
+            thePromises.push(Read_D365(url))
 
-            let results = await Promise.all(tablePromises);
+            let results = await Promise.all(thePromises);
             let DataArr = results.at(-1).map(row => 
                 row.map(item => item === null ? '' : item)
             )
 
             // Update existing table
             let logicalHeaderNames = DataArr.shift(); // Remove header row
-            let primaryColNum = logicalHeaderNames.indexOf(EntityAttributes[table.name]["PrimaryName"])
+            let primaryColNum = logicalHeaderNames.indexOf(EntityAttributes[table.name]["PrimaryID"])
             // Create an array of promises
-            let mappingPromises = DataArr.map(row => {
+            let mappingPromises = DataArr.map((row, rowIndex) => {
                 return hashString(JSON.stringify(row))
-                    .then(hash => [row[primaryColNum], hash]);
+                    .then(hash => [row[primaryColNum], rowIndex, hash]);
             });
 
             // Resolve all promises and assign the results
@@ -1016,7 +981,6 @@
     // row change events handlers
     function rowInsertedHandler(startRow, endRow, startCol, endCol, thisTableName, thisTableData) {
         let rowId_Mapping = pp_eacb_rowIdMapping[thisTableName]
-        let promiseArray = [];
 
         for (let r = startRow; r <= endRow; r++) {
             let jsonPayLoad = {};
@@ -1030,20 +994,16 @@
             }
 
             if (Object.keys(jsonPayLoad).length > 0) {
-                let createD365Promise = Create_D365(thisTableName, jsonPayLoad, EntityAttributes[thisTableName]["PrimaryName"])
+                let createD365Promise = Create_D365(thisTableName, jsonPayLoad, EntityAttributes[thisTableName]["PrimaryID"])
                 // update row mapping table
                 let tempID = uuid.v4()
-                if (r - 1 + 1 > rowId_Mapping.length) {
-                    rowId_Mapping.push([createD365Promise, "Hash", tempID]);
-                } else {
-                    rowId_Mapping.splice(r - 1, 0, [createD365Promise, "Hash", tempID]);
-                }
+                rowId_Mapping.splice(Math.min(r - 1, rowId_Mapping.length), 0, [createD365Promise, r - 1, "Hash", tempID]);
                 // replace promise with the guid once promise is resolved
                 (async () => {
                     let guid = createD365Promise instanceof Promise ? await createD365Promise : createD365Promise;
-                    let existedRow = rowId_Mapping.find(rowInfo => rowInfo[2] === tempID)
+                    let existedRow = rowId_Mapping.find(rowInfo => rowInfo[3] === tempID)
                     if (existedRow) {
-                        rowId_Mapping[r - 1] = [guid, "Hash"]
+                        rowId_Mapping[r - 1] = [guid, r - 1, "Hash"]
                     }
                 })()
             }

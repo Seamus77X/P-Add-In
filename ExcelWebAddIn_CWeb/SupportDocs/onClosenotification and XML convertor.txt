@@ -1,0 +1,77 @@
+
+                // Enable the before document close modal notification dialog.
+                Office.addin.beforeDocumentCloseNotification.enable()
+                Office.addin.beforeDocumentCloseNotification.onCloseActionCancelled(
+                    async function updateOrAddCustomXmlPart(dataObject = pp_eacb_rowIdMapping, xmlPart_settingKey = "xmlPartId") {
+                        await Excel.run(async (context) => {
+                            const ns = 'http://schemas.kbr.com/syncinfo.com';
+                            let xmlData = `<Tables xmlns='${ns}'>`;
+                            for (const [key, table] of Object.entries(dataObject)) {
+                                xmlData += `<Table name="${key}">${table.map(row =>
+                                    `<Row>${row.map(cell => `<Cell>${cell}</Cell>`).join('')}</Row>`
+                                ).join('')}</Table>`;
+                            }
+                            xmlData += '</Tables>';
+
+                            const settings = context.workbook.settings;
+                            const xmlPartIdSetting = settings.getItemOrNullObject(xmlPart_settingKey);
+                            xmlPartIdSetting.load('value');
+                            await context.sync();
+
+                            let customXmlPart;
+                            if (!xmlPartIdSetting.isNullObject) {
+                                // XML part exists, retrieve and update it
+                                customXmlPart = context.workbook.customXmlParts.getItem(xmlPartIdSetting.value);
+                                customXmlPart.getXml();
+                                customXmlPart.setXml(xmlData);
+                            } else {
+                                // XML part does not exist, add a new one
+                                customXmlPart = context.workbook.customXmlParts.add(xmlData);
+                                customXmlPart.load("id");
+                                await context.sync();
+
+                                // Store the new XML part's ID in settings
+                                settings.add(xmlPart_settingKey, customXmlPart.id);
+                            }
+
+                            await context.sync();
+                        }).catch(error => {
+                            console.error(error);
+                        });
+                    }
+                );
+
+                console.log(readCustomXmlPartAsObject("xmlPartId"))
+                function readCustomXmlPartAsObject(xmlPart_settingKey) {
+                    return Excel.run(async (context) => {
+                        const settings = context.workbook.settings;
+                        const settingItem = settings.getItemOrNullObject(xmlPart_settingKey);
+                        settingItem.load('value');
+
+                        await context.sync();
+
+                        if (!settingItem.isNullObject) {
+                            const customXmlPart = context.workbook.customXmlParts.getItem(settingItem.value);
+                            let customXmlValue = customXmlPart.getXml();
+                            await context.sync();
+
+                            const parser = new DOMParser();
+                            const xmlDoc = parser.parseFromString(customXmlValue.value, "text/xml");
+                            const tables = xmlDoc.getElementsByTagName("Table");
+                            let dataObject = {};
+
+                            for (const table of tables) {
+                                const tableName = table.getAttribute("name");
+                                const rows = table.getElementsByTagName("Row");
+                                dataObject[tableName] = Array.from(rows).map(row => {
+                                    return Array.from(row.getElementsByTagName("Cell")).map(cell => cell.textContent);
+                                });
+                            }
+                            return dataObject;
+                        } else {
+                            return false;
+                        }
+                    }).catch(error => {
+                        console.error(error);
+                    });
+                }
