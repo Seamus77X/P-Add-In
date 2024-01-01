@@ -49,6 +49,85 @@
                 //Office.addin.hide();
                 //Office.addin.setStartupBehavior(Office.StartupBehavior.none);
 
+                // Enable the before document close modal notification dialog.
+                Office.addin.beforeDocumentCloseNotification.enable()
+
+                Office.addin.beforeDocumentCloseNotification.onCloseActionCancelled(updateOrAddCustomXmlPart(pp_eacb_rowIdMapping, "xmlPartId"));
+
+                console.log(readCustomXmlPartAsObject("xmlPartId"))
+                function readCustomXmlPartAsObject(xmlPart_settingKey) {
+                    return Excel.run(async (context) => {
+                        const settings = context.workbook.settings;
+                        settings.load("items");
+                        await context.sync();
+
+                        if (settings.items[xmlPart_settingKey]) {
+                            const xmlPartId = settings.items[xmlPart_settingKey];
+                            const customXmlPart = context.workbook.customXmlParts.getItem(xmlPartId);
+                            customXmlPart.load("xml");
+                            await context.sync();
+
+                            const parser = new DOMParser();
+                            const xmlDoc = parser.parseFromString(customXmlPart.xml, "text/xml");
+                            const tables = xmlDoc.getElementsByTagName("Table");
+                            let dataObject = {};
+
+                            for (const table of tables) {
+                                const tableName = table.getAttribute("name");
+                                const rows = table.getElementsByTagName("Row");
+                                dataObject[tableName] = Array.from(rows).map(row => {
+                                    return Array.from(row.getElementsByTagName("Cell")).map(cell => cell.textContent);
+                                });
+                            }
+
+                            return dataObject;
+                        } else {
+                            return false;
+                        }
+                    }).catch(error => {
+                        console.error(error);
+                        return false;
+                    });
+                }
+                async function updateOrAddCustomXmlPart(dataObject, xmlPart_settingKey) {
+                    await Excel.run(async (context) => {
+                        const ns = 'http://schemas.kbr.com/syncinfo.com';
+                        let xmlData = `<Tables xmlns='${ns}'>`;
+                        for (const [key, table] of Object.entries(dataObject)) {
+                            xmlData += `<Table name="${key}">${table.map(row =>
+                                `<Row>${row.map(cell => `<Cell>${cell}</Cell>`).join('')}</Row>`
+                            ).join('')}</Table>`;
+                        }
+                        xmlData += '</Tables>';
+
+                        const settings = context.workbook.settings;
+                        settings.load("items");
+                        await context.sync();
+
+                        let customXmlPart;
+                        if (settings.items[xmlPart_settingKey]) {
+                            // XML part exists, retrieve and update it
+                            const xmlPartId = settings.items[xmlPart_settingKey];
+                            customXmlPart = context.workbook.customXmlParts.getItem(xmlPartId);
+                            customXmlPart.getXml();
+                            customXmlPart.setXml(xmlData);
+                        } else {
+                            // XML part does not exist, add a new one
+                            customXmlPart = context.workbook.customXmlParts.add(xmlData);
+                            customXmlPart.load("id");
+                            await context.sync();
+
+                            // Store the new XML part's ID in settings
+                            settings.add(xmlPart_settingKey, customXmlPart.id);
+                        }
+
+                        await context.sync();
+                    }).catch(error => {
+                        console.error(error);
+                    });
+                }
+
+
                 //////////////////////////////////////////////////
                 // Initialise Add-In taskpane page
                 //////////////////////////////////////////////////
@@ -188,49 +267,52 @@
                 //////////////////////////////////////////////////
                 // Register the workbook
                 //////////////////////////////////////////////////
-                (async () => {
-                    Excel.run(async (context) => {
-                        const workbook = context.workbook;
-                        const properties = workbook.properties;
-                        const customProperties = properties.custom;
+                //(async () => {
+                //    Excel.run(async (context) => {
+                //        const workbook = context.workbook;
+                //        const properties = workbook.properties;
+                //        const customProperties = properties.custom;
 
-                        properties.load('creationDate');
-                        customProperties.load("items/key, items/value");
+                //        properties.load('creationDate');
+                //        customProperties.load("items/key, items/value");
 
-                        await context.sync();
+                //        await context.sync();
 
-                        // Check if the property already exists
-                        const existingProperty = customProperties.items.find(prop => prop.key === "Workbook ID");
-                        if (existingProperty) {
-                            workbookGUID = existingProperty.value
+                //        // Check if the property already exists
+                //        const existingProperty = customProperties.items.find(prop => prop.key === "Workbook ID");
+                //        if (existingProperty) {
+                //            workbookGUID = existingProperty.value
 
-                            if (workbookGUID.split(" - ")[1] === `${properties.creationDate}`) {
-                                console.log("Not a copy")
-                            } else {
-                                console.log("This is a copy")
-                            }
+                //            if (workbookGUID.split(" - ")[1] === `${properties.creationDate}`) {
+                //                console.log("Not a copy")
+                //            } else {
+                //                console.log("This is a copy")
+                //            }
 
-                            console.log("Workbook ID retrieved.");
-                        } else {
-                            workbookGUID = `[${uuid.v4()}] - ${properties.creationDate}`
-                            customProperties.add("Workbook ID", workbookGUID); // Add new property
+                //            console.log("Workbook ID retrieved.");
+                //        } else {
+                //            workbookGUID = `[${uuid.v4()}] - ${properties.creationDate}`
+                //            customProperties.add("Workbook ID", workbookGUID); // Add new property
 
-                            await context.sync();
-                            console.log("Workbook ID created.");
-                        }
-                        pp_eacb_rowIdMapping[workbookGUID] = {}
-                    });
-                })()
+                //            await context.sync();
+                //            console.log("Workbook ID created.");
+                //        }
+                //        pp_eacb_rowIdMapping[workbookGUID] = {}
+                //    });
+                //})()
 
                 //////////////////////////////////////////////////
                 // Add function to Excel ribbon buttons
                 //////////////////////////////////////////////////
+
+
                 Office.actions.associate("buttonFunction", function (event) {
                     console.log('Hey, you just pressed a ribbon button.')
-                    Create_D365('sensei_lessonslearned', { 'sensei_name': 'Add Test', 'sc_additionalcommentsnotes': 'ADD Redo_Undo_Event_Done from Web Add-In' })
+                    //Create_D365('sensei_lessonslearned', { 'sensei_name': 'Add Test', 'sc_additionalcommentsnotes': 'ADD Redo_Undo_Event_Done from Web Add-In' })
 
                     console.log(pp_eacb_rowIdMapping)
                     console.log(EntityAttributes)
+
                     event.completed();
                 })
 
@@ -1018,6 +1100,7 @@
             if (eventsTracker[1] === "Fulfilled") { eventsTracker = ['', ''] }
             eventsTracker[0] += "B"
             tableEventAddress = eventArgs.address
+            let previousTableData_copy = previousTableData //keep a copy of current table data
 
             let thisTableChangeType = eventArgs.changeType
             Excel.run( (ctx) => {
@@ -1042,6 +1125,7 @@
                 return ctx.sync().then(() => {
                     let rowId_Mapping = pp_eacb_rowIdMapping[workbookGUID][table.name]
                     eventsTracker[1] = "Fulfilled"
+                    let tableData = tableRange.values
                     previousTableData = tableRange.values // update the previous data
 
                     ////////////////////////////////////////////
@@ -1050,7 +1134,9 @@
 
                     let discontinuousRangeChange_undo_redo = false
                     // continue if undo or redo discontinuous range content change
-                    if (sheetEventAddress !== undefined && sheetEventAddress.includes(",")) {
+                    if (_.isEqual(previousTableData_copy, tableData)) {
+                        return
+                    } else if (sheetEventAddress !== undefined && sheetEventAddress.includes(",")) {
                         let numberOfRanges = sheetEventAddress.split(",").length
                         if (eventsTracker[0] === "B".repeat(numberOfRanges) + "A"
                             || "A" + eventsTracker[0] === "B".repeat(numberOfRanges)) {
@@ -1078,7 +1164,6 @@
                         }
                     }
 
-                    let tableData = tableRange.values
                     let tableStartRow = tableRange.rowIndex;
                     let tableStartCol = tableRange.columnIndex;
 
@@ -1214,7 +1299,9 @@
                     ////////////////////////////////////////////
 
                     // quit and let table event listener handle this if redo or undo multiple discontinuous range content change
-                    if (sheetEventAddress.includes(",")) {
+                    if (rowChangeStartPosition === 'equivalent') {
+                        return
+                    } else if (sheetEventAddress.includes(",")) {
                         let numberOfRanges = sheetEventAddress.split(",").length
                         if (eventsTracker[0] === "B".repeat(numberOfRanges) + "A"
                             || "A" + eventsTracker[0] === "B".repeat(numberOfRanges)) {
@@ -1244,7 +1331,7 @@
                         } else if (eventsTracker[0].length === 2) {
                             if (eventsTracker[0] === "AA") {
                                 // must be undo or redo multiple continuous row changes if no change in tables content or tables row
-                                if (rowChangeStartPosition === 'equivalent' || rowsGap === 0) {
+                                if (rowsGap === 0) {
                                     multi_undo_redo = true
                                 // replicate the previous operation for previous table to match current table, if equal, then remark it as not multiple...
                                 } else if (!compareTables(previousTableData_copy, currentTableData, rowChangeStartPosition, rowsGap)) {
@@ -1254,7 +1341,7 @@
                             }
                         } else if (eventsTracker[0].length === 3) {
                             if (eventsTracker[0] === "ABA") {
-                                if (rowChangeStartPosition === 'equivalent' || rowsGap === 0) {
+                                if (rowsGap === 0) {
                                     multi_undo_redo = true
                                 } else if (!compareTables(previousTableData_copy, currentTableData, rowChangeStartPosition, rowsGap)) {
                                     // if not equal, then must be multiple redo/undo
@@ -1271,13 +1358,11 @@
                     }
 
                     if (multi_undo_redo) {
-                        if (_.isEqual(previousTableData_copy, currentTableData) === false) {
-                            // replace the existing table because multiple continuous redo/undo operations cannot be splited into individual operation
-                            rowDeletedHandler(1, rowId_Mapping.length, table.name)
-                            rowInsertedHandler(1, currentTableData.length - 1, 0, currentTableData[0].length - 1, table.name, currentTableData)
+                        // replace the existing table because multiple continuous redo/undo operations cannot be splited into individual operation
+                        rowDeletedHandler(1, rowId_Mapping.length, table.name)
+                        rowInsertedHandler(1, currentTableData.length - 1, 0, currentTableData[0].length - 1, table.name, currentTableData)
 
-                            console.log(`Multiple continuous undo or redo operations detected: The whole '${table.name}' table is updated.`);
-                        }
+                        console.log(`Multiple continuous undo or redo operations detected: The whole '${table.name}' table is updated.`);
                         return 
                     }
 
