@@ -17,7 +17,7 @@
 	<ProviderName>[Project Control Team]</ProviderName>
 	<DefaultLocale>en-US</DefaultLocale>
 	<!-- The display name of your add-in. Used on the store and various places of the Office UI such as the add-ins dialog. -->
-	<DisplayName DefaultValue="P+ integration add-in" />
+	<DisplayName DefaultValue="PortfolioPlus Integration Add-in" />
 	<Description DefaultValue="Data link between P+ and EACBOL" />
 	<!-- Icon for your add-in. Used on installation screens and the add-ins dialog. -->
 	<IconUrl DefaultValue="https://seamus77x.github.io/EACB/ExcelWebAddIn1Web/Images/P+_32.png" />

@@ -6,7 +6,6 @@
     // Declaration of global variables for later use
     let messageBanner;
     let accessToken;  // used to store user's access token
-    let workbookGUID
     let runningEnvir
     let pp_eacb_rowIdMapping = { }
     let pp_eacb_fieldNameMapping = {
@@ -51,24 +50,62 @@
 
                 // Enable the before document close modal notification dialog.
                 Office.addin.beforeDocumentCloseNotification.enable()
+                Office.addin.beforeDocumentCloseNotification.onCloseActionCancelled(
+                    async function updateOrAddCustomXmlPart(dataObject = pp_eacb_rowIdMapping, xmlPart_settingKey = "xmlPartId") {
+                        await Excel.run(async (context) => {
+                            const ns = 'http://schemas.kbr.com/syncinfo.com';
+                            let xmlData = `<Tables xmlns='${ns}'>`;
+                            for (const [key, table] of Object.entries(dataObject)) {
+                                xmlData += `<Table name="${key}">${table.map(row =>
+                                    `<Row>${row.map(cell => `<Cell>${cell}</Cell>`).join('')}</Row>`
+                                ).join('')}</Table>`;
+                            }
+                            xmlData += '</Tables>';
 
-                Office.addin.beforeDocumentCloseNotification.onCloseActionCancelled(updateOrAddCustomXmlPart(pp_eacb_rowIdMapping, "xmlPartId"));
+                            const settings = context.workbook.settings;
+                            const xmlPartIdSetting = settings.getItemOrNullObject(xmlPart_settingKey);
+                            xmlPartIdSetting.load('value');
+                            await context.sync();
+
+                            let customXmlPart;
+                            if (!xmlPartIdSetting.isNullObject) {
+                                // XML part exists, retrieve and update it
+                                customXmlPart = context.workbook.customXmlParts.getItem(xmlPartIdSetting.value);
+                                customXmlPart.getXml();
+                                customXmlPart.setXml(xmlData);
+                            } else {
+                                // XML part does not exist, add a new one
+                                customXmlPart = context.workbook.customXmlParts.add(xmlData);
+                                customXmlPart.load("id");
+                                await context.sync();
+
+                                // Store the new XML part's ID in settings
+                                settings.add(xmlPart_settingKey, customXmlPart.id);
+                            }
+
+                            await context.sync();
+                        }).catch(error => {
+                            console.error(error);
+                        });
+                    }
+                );
 
                 console.log(readCustomXmlPartAsObject("xmlPartId"))
                 function readCustomXmlPartAsObject(xmlPart_settingKey) {
                     return Excel.run(async (context) => {
                         const settings = context.workbook.settings;
-                        settings.load("items");
+                        const settingItem = settings.getItemOrNullObject(xmlPart_settingKey);
+                        settingItem.load('value');
+
                         await context.sync();
 
-                        if (settings.items[xmlPart_settingKey]) {
-                            const xmlPartId = settings.items[xmlPart_settingKey];
-                            const customXmlPart = context.workbook.customXmlParts.getItem(xmlPartId);
-                            customXmlPart.load("xml");
+                        if (!settingItem.isNullObject) {
+                            const customXmlPart = context.workbook.customXmlParts.getItem(settingItem.value);
+                            let customXmlValue = customXmlPart.getXml();
                             await context.sync();
 
                             const parser = new DOMParser();
-                            const xmlDoc = parser.parseFromString(customXmlPart.xml, "text/xml");
+                            const xmlDoc = parser.parseFromString(customXmlValue.value, "text/xml");
                             const tables = xmlDoc.getElementsByTagName("Table");
                             let dataObject = {};
 
@@ -79,53 +116,16 @@
                                     return Array.from(row.getElementsByTagName("Cell")).map(cell => cell.textContent);
                                 });
                             }
-
                             return dataObject;
                         } else {
                             return false;
                         }
                     }).catch(error => {
                         console.error(error);
-                        return false;
                     });
                 }
-                async function updateOrAddCustomXmlPart(dataObject, xmlPart_settingKey) {
-                    await Excel.run(async (context) => {
-                        const ns = 'http://schemas.kbr.com/syncinfo.com';
-                        let xmlData = `<Tables xmlns='${ns}'>`;
-                        for (const [key, table] of Object.entries(dataObject)) {
-                            xmlData += `<Table name="${key}">${table.map(row =>
-                                `<Row>${row.map(cell => `<Cell>${cell}</Cell>`).join('')}</Row>`
-                            ).join('')}</Table>`;
-                        }
-                        xmlData += '</Tables>';
 
-                        const settings = context.workbook.settings;
-                        settings.load("items");
-                        await context.sync();
-
-                        let customXmlPart;
-                        if (settings.items[xmlPart_settingKey]) {
-                            // XML part exists, retrieve and update it
-                            const xmlPartId = settings.items[xmlPart_settingKey];
-                            customXmlPart = context.workbook.customXmlParts.getItem(xmlPartId);
-                            customXmlPart.getXml();
-                            customXmlPart.setXml(xmlData);
-                        } else {
-                            // XML part does not exist, add a new one
-                            customXmlPart = context.workbook.customXmlParts.add(xmlData);
-                            customXmlPart.load("id");
-                            await context.sync();
-
-                            // Store the new XML part's ID in settings
-                            settings.add(xmlPart_settingKey, customXmlPart.id);
-                        }
-
-                        await context.sync();
-                    }).catch(error => {
-                        console.error(error);
-                    });
-                }
+                
 
 
                 //////////////////////////////////////////////////
@@ -504,8 +504,6 @@
                     for (const table of sheet.tables.items) {
                         if (validTables.includes(table.name)) {
                             tablePromises.push(processTable(table, sheet, context));
-                            // add listener to the table if no listener
-                            registerTableChangeEvent(table)
                         }
                     }
                 }
@@ -609,7 +607,7 @@
 
             // Resolve all promises and assign the results
             Promise.all(mappingPromises).then(mappingTab => {
-                pp_eacb_rowIdMapping[workbookGUID][table.name] = mappingTab;
+                pp_eacb_rowIdMapping[table.name] = mappingTab;
             })
 
             const firstRowRange = table.getDataBodyRange().getRow(0).load('formulas');
@@ -652,6 +650,9 @@
             resizedRange.format.autofitRows();
 
             await context.sync();
+
+            // add listener to the table if no listener
+            registerTableChangeEvent(table)
         }
     }
 
@@ -1006,7 +1007,7 @@
     let multi_undo_redo = ''
     // row change events handlers
     function rowInsertedHandler(startRow, endRow, startCol, endCol, thisTableName, thisTableData) {
-        let rowId_Mapping = pp_eacb_rowIdMapping[workbookGUID][thisTableName]
+        let rowId_Mapping = pp_eacb_rowIdMapping[thisTableName]
         let promiseArray = [];
 
         for (let r = startRow; r <= endRow; r++) {
@@ -1042,7 +1043,7 @@
     }
 
     function rowDeletedHandler(startRow, endRow, thisTableName) {
-        let rowId_Mapping = pp_eacb_rowIdMapping[workbookGUID][thisTableName]
+        let rowId_Mapping = pp_eacb_rowIdMapping[thisTableName]
 
         // collect the row num of the rows deleted
         for (let r = endRow; r >= startRow; r--) {
@@ -1062,7 +1063,7 @@
     // range content change event handler
     function rangeChangeHandler(startRow, endRow, startCol, endCol, thisTableData, thisTableName, thisEventArgs) {
         // construct the JSON PayloadRowNo_RowGUID_MappingTable
-        let rowId_Mapping = pp_eacb_rowIdMapping[workbookGUID][thisTableName]
+        let rowId_Mapping = pp_eacb_rowIdMapping[thisTableName]
 
         for (let r = startRow; r <= endRow; r++) {
             let jsonPayLoad = {};
@@ -1123,7 +1124,7 @@
                 tableRange.load("rowIndex, columnIndex, rowCount, columnCount, values")
 
                 return ctx.sync().then(() => {
-                    let rowId_Mapping = pp_eacb_rowIdMapping[workbookGUID][table.name]
+                    let rowId_Mapping = pp_eacb_rowIdMapping[table.name]
                     eventsTracker[1] = "Fulfilled"
                     let tableData = tableRange.values
                     previousTableData = tableRange.values // update the previous data
@@ -1259,7 +1260,7 @@
                 return ctx.sync().then(() => {
                     if (multi_undo_redo) {return}
 
-                    let rowId_Mapping = pp_eacb_rowIdMapping[workbookGUID][table.name]
+                    let rowId_Mapping = pp_eacb_rowIdMapping[table.name]
                     eventsTracker[1] = "Fulfilled"
                     previousTableData = tableRange.values // update the previous data
 
