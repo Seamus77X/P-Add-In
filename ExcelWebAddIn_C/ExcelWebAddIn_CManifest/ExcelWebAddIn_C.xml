@@ -20,10 +20,10 @@
 	<DisplayName DefaultValue="PortfolioPlus Integration Add-in" />
 	<Description DefaultValue="Data link between P+ and EACBOL" />
 	<!-- Icon for your add-in. Used on installation screens and the add-ins dialog. -->
-	<IconUrl DefaultValue="https://seamus77x.github.io/P-Add-In/ExcelWebAddIn_CWeb/Images/AddinIcon.png" />
+	<IconUrl DefaultValue="https://seamus77x.github.io/P-Add-In/ExcelWebAddIn_CWeb/Images/P+_32.png" />
 	<HighResolutionIconUrl DefaultValue="https://seamus77x.github.io/P-Add-In/ExcelWebAddIn_CWeb/Images/P+_80.png" />
 
-	<SupportUrl DefaultValue="http://www.contoso.com" />
+	<SupportUrl DefaultValue="https://kbrcorpau.sharepoint.com/:l:/r/sites/IQ_General_Users.O.AINF.IN.CI.AU.Team/Lists/Issue%20tracking?e=bJ8Srg" />
 	<!-- Domains that will be allowed when navigating. For example, if you use ShowTaskpane and then have an href link, navigation will only be allowed if the domain is on this list. -->
 	<AppDomains>
 		<AppDomain>https://seamus77x.github.io</AppDomain>
@@ -149,7 +149,7 @@
 			<bt:Urls>
 				<!--<bt:Url id="KBR.Taskpane.Url" DefaultValue="https://seamus77x.github.io/P-Add-In/ExcelWebAddIn_CWeb/Home.html" />-->
 				<bt:Url id="KBR.Taskpane.Url" DefaultValue="~remoteAppUrl/Home.html" />
-				<bt:Url id="KBR.GetStarted.LearnMoreUrl" DefaultValue="https://go.microsoft.com/fwlink/?LinkId=276812" />
+				<bt:Url id="KBR.GetStarted.LearnMoreUrl" DefaultValue="https://kbrcorpau.sharepoint.com/:l:/r/sites/IQ_General_Users.O.AINF.IN.CI.AU.Team/Lists/Issue%20tracking?e=bJ8Srg" />
 			</bt:Urls>
 			<!-- ShortStrings max characters==125. -->
 			<bt:ShortStrings>
