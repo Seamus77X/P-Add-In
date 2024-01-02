@@ -448,36 +448,35 @@
             let mappingArray = pp_eacb_fieldNameMapping[table.name];
             let thePromises = []
 
+            EntityAttributes[table.name] = {}
+
             // get Logical Name of the table
             entityPath = 'EntityDefinitions'
-            selectCondition = '?$select=LogicalName'
+            selectCondition = '?$select=LogicalName,PrimaryIdAttribute,PrimaryNameAttribute'
             filterCondition = `&$filter=EntitySetName eq '${table.name}'`
+
             url = `${resourceDomain}api/data/v9.2/${entityPath}${selectCondition}${filterCondition}&LabelLanguages=1033`
-            let EntityLogicalName = await Read_D365(url).then((result) => {
-                return result[1][result[0].indexOf("LogicalName")]
+            let EntityLogicalName
+            await Read_D365(url).then((result) => {
+                EntityAttributes[table.name]["PrimaryID"] = result[1][result[0].indexOf("PrimaryIdAttribute")]
+                EntityAttributes[table.name]["PrimaryName"] = result[1][result[0].indexOf("PrimaryNameAttribute")]
+
+                EntityLogicalName = result[1][result[0].indexOf("LogicalName")]
             })
 
             // get the Field Proerties of the table
-            EntityAttributes[table.name] = {}
-
             entityPath = `EntityDefinitions(LogicalName='${EntityLogicalName}')/Attributes`
-            selectArr = ['MetadataId', 'LogicalName', 'AttributeType', 'IsPrimaryId', 'IsPrimaryName']
+            selectArr = ['MetadataId', 'LogicalName', 'AttributeType']
             filterArr = mappingArray.map(entry => `LogicalName eq '${entry[0]}'`);
             selectCondition = `?$select=${selectArr.join(',')}`
             filterCondition = `&$filter=${filterArr.join(' or ')}`
             
             url = `${resourceDomain}api/data/v9.2/${entityPath}${selectCondition}${filterCondition}&LabelLanguages=1033`;
             thePromises.push(Read_D365(url).then((result) => {
-                let IsPrimaryId_colNo = result[0].indexOf('IsPrimaryId')
-                let LogicalName_colNo = result[0].indexOf('LogicalName')
-                let primaryIdRow = result.find(row => row[IsPrimaryId_colNo] === true)
-                let primaryColName = primaryIdRow ? primaryIdRow[LogicalName_colNo] : undefined;
-
-                let excludedCols_index = ['MetadataId', '@odata.type', 'IsPrimaryId', 'IsPrimaryName'].map(fieldName => result[0].indexOf(fieldName))
+                let excludedCols_index = ['MetadataId', '@odata.type'].map(fieldName => result[0].indexOf(fieldName))
                 let properties = result.map(row => row.filter((item, index) => !excludedCols_index.includes(index)))
 
-                EntityAttributes[table.name]["PrimaryID"] = primaryColName
-                EntityAttributes[table.name]["EntityDefinitions"] = properties
+                EntityAttributes[table.name]["FieldDataType"] = properties
             }))
 
             // get the PickLists Field Properties of the table
@@ -512,12 +511,14 @@
             const lookupFields = mappingArray
                 .filter(row => pattern.test(row[0]))
                 .map(row => row[0].replace(/^_/, '').replace(/_value$/, ''));
+
                 // build url
             entityPath = "RelationshipDefinitions/Microsoft.Dynamics.CRM.OneToManyRelationshipMetadata"
             selectArr = ['ReferencingEntityNavigationPropertyName', 'ReferencedEntity', 'ReferencedAttribute']
             filterArr = lookupFields.map(field => `ReferencingAttribute eq '${field}'`);
             selectCondition = `?$select=${selectArr.join(',')}`
             filterCondition = `&$filter=ReferencingEntity eq '${EntityLogicalName}' and (${filterArr.join(' or ')})`
+
                 // get mapping info
             url = `${resourceDomain}api/data/v9.2/${entityPath}${selectCondition}${filterCondition}`
             thePromises.push(Read_D365(url).then((result) => {
@@ -530,7 +531,7 @@
                 filterArr = lookupInfo_copy.map(fieldInfo => `LogicalName eq '${fieldInfo[colIndex]}'`)
 
                 entityPath = 'EntityDefinitions'
-                selectCondition = '?$select=LogicalName,EntitySetName'
+                selectCondition = '?$select=LogicalName,EntitySetName,PrimaryIdAttribute'
                 filterCondition = `&$filter=${filterArr.join(' or ') }`
                 // get EntitySetName
                 url = `${resourceDomain}api/data/v9.2/${entityPath}${selectCondition}${filterCondition}&LabelLanguages=1033`

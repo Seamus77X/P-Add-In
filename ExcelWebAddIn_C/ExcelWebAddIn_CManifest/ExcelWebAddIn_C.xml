@@ -157,7 +157,7 @@
 				<bt:String id="KBR.Group1Label" DefaultValue="Commands Group" />
 				<bt:String id="KBR.GetStarted.Title" DefaultValue="Get started with your P+ Integration Add-in!" />
 
-				<bt:String id="KBR.Tab1.TabLabel" DefaultValue="P+ integration add-in" />
+				<bt:String id="KBR.Tab1.TabLabel" DefaultValue="PortfolioPlus Integration Add-in" />
 			</bt:ShortStrings>
 			<!-- LongStrings max characters==250. -->
 			<bt:LongStrings>
