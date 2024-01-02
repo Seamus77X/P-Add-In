@@ -497,14 +497,17 @@
             }))
 
             // get the PickLists Field Properties of the table
-            selectArr = ['MetadataId', 'LogicalName']
-            selectCondition = `?$select=${selectArr.join(',')}`
             entityPath = `EntityDefinitions(LogicalName='${EntityLogicalName}')/Attributes/Microsoft.Dynamics.CRM.PicklistAttributeMetadata`
+            selectArr = ['MetadataId', 'LogicalName']
+            filterArr = mappingArray.map(row => `LogicalName eq '${row[0]}'`)
+            selectCondition = `?$select=${selectArr.join(',')}`
+            filterCondition = `&$filter=${filterArr.join(' or ')}`
+            
             let referencedEntity = "GlobalOptionSet"
             let referencedField = "Options"
             expandCondition = `&$expand=${referencedEntity}($select=${referencedField})` 
 
-            url = `${resourceDomain}api/data/v9.2/${entityPath}${selectCondition}${expandCondition}&LabelLanguages=1033`;
+            url = `${resourceDomain}api/data/v9.2/${entityPath}${selectCondition}${filterCondition}${expandCondition}&LabelLanguages=1033`;
             thePromises.push(Read_D365(url).then((result) => {
                 let thisPickList = {}
 
@@ -591,8 +594,8 @@
 
                             url = `${resourceDomain}api/data/v9.2/${entityPath}${selectCondition}`
                             Read_D365(url).then((result) => {
-                                let excludedCols_index = ['@odata.etag'].map(fieldName => result[0].indexOf(fieldName))
-                                let lookupMapping = result.map(row => row.filter((item, index) => !excludedCols_index.includes(index)))
+                                let wantedCols_index = [referencedEntityPrimaryName, referencedEntityPrimaryId].map(fieldName => result[0].indexOf(fieldName))
+                                let lookupMapping = result.map(row => row.filter((item, index) => wantedCols_index.includes(index)))
                                 lookupMapping.shift()
 
                                 let lookupFieldName = `_${row[lookupInfo[0].indexOf("ReferencingAttribute")]}_value`
