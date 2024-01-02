@@ -22,8 +22,17 @@
             ["sensei_recommendation", "Recommendations"],
             ["sc_additionalcommentsnotes", "Additional Comments/Notes"]
         ],
-        'sensei_risks': [],
-        'sc_variations': []
+        'sensei_risks': [
+            ["sc_riskdescription", "Description"],
+            ["sc_riskoropportunity", "Risk_Opportunity"],
+            ["_sc_wbs_value", "WBS"],
+            ["_sensei_riskowner_value", "Owner"]
+        ],
+        'sc_variations': [
+            ["sc_variationstatus", "Status"],
+            ["sc_variationtype", "Variation Type (Lump Sum/Reimburse)"],
+            ["sc_name", "KBR Variation Number"]
+        ]
     }
     let EntityAttributes = {}
 
@@ -230,7 +239,7 @@
                 //////////////////////////////////////////////////
                 Office.actions.associate("buttonFunction", function (event) {
                     console.log('Hey, you just pressed a ribbon button.')
-                    //Create_D365('sensei_lessonslearned', { 'sensei_name': 'Add Test', 'sc_additionalcommentsnotes': 'ADD Redo_Undo_Event_Done from Web Add-In' })
+                    Create_D365('sensei_lessonslearned', { 'sensei_category': '100000001', 'sc_Discipline@odata.bind': '/sc_disciplines(0f49df58-4d91-ec11-8d20-00224815a133)' }, EntityAttributes['sensei_lessonslearned']["PrimaryID"])
 
                     console.log(pp_eacb_rowIdMapping)
                     console.log(EntityAttributes)
@@ -254,7 +263,7 @@
             ctx.runtime.enableEvents = false;
             await ctx.sync();
 
-            await loadData(['sensei_lessonslearned']);
+            await loadData(['sensei_lessonslearned', 'sensei_risks','sc_variations']);
 
             ctx.application.calculationMode = Excel.CalculationMode.automatic;
             ctx.runtime.enableEvents = true;
@@ -449,6 +458,7 @@
             let thePromises = []
 
             EntityAttributes[table.name] = {}
+            EntityAttributes[table.name]["LookupRelationship"] = {}
 
             // get Logical Name of the table
             entityPath = 'EntityDefinitions'
@@ -464,10 +474,10 @@
                 EntityLogicalName = result[1][result[0].indexOf("LogicalName")]
             })
 
-            // get the Field Proerties of the table
+            // get the Field type of the table
             entityPath = `EntityDefinitions(LogicalName='${EntityLogicalName}')/Attributes`
             selectArr = ['MetadataId', 'LogicalName', 'AttributeType']
-            filterArr = mappingArray.map(entry => `LogicalName eq '${entry[0]}'`);
+            filterArr = mappingArray.map(row => `LogicalName eq '${row[0]}'`)
             selectCondition = `?$select=${selectArr.join(',')}`
             filterCondition = `&$filter=${filterArr.join(' or ')}`
             
@@ -476,26 +486,35 @@
                 let excludedCols_index = ['MetadataId', '@odata.type'].map(fieldName => result[0].indexOf(fieldName))
                 let properties = result.map(row => row.filter((item, index) => !excludedCols_index.includes(index)))
 
-                EntityAttributes[table.name]["FieldDataType"] = properties
+                EntityAttributes[table.name]["AttributeType"] = properties
+                // add type for lookup field
+                mappingArray.map((row) => {
+                    const pattern = /^_.*_value$/;
+                    if (pattern.test(row[0])) {
+                        EntityAttributes[table.name]["AttributeType"].push([row[0],'Lookup'])
+                    }
+                })
             }))
 
             // get the PickLists Field Properties of the table
             selectArr = ['MetadataId', 'LogicalName']
             selectCondition = `?$select=${selectArr.join(',')}`
             entityPath = `EntityDefinitions(LogicalName='${EntityLogicalName}')/Attributes/Microsoft.Dynamics.CRM.PicklistAttributeMetadata`
-            expandCondition = `&$expand=GlobalOptionSet($select=Options)` 
+            let referencedEntity = "GlobalOptionSet"
+            let referencedField = "Options"
+            expandCondition = `&$expand=${referencedEntity}($select=${referencedField})` 
 
             url = `${resourceDomain}api/data/v9.2/${entityPath}${selectCondition}${expandCondition}&LabelLanguages=1033`;
             thePromises.push(Read_D365(url).then((result) => {
                 let thisPickList = {}
 
                 let headerRow = result.shift()
-                let picklistName_colNum = headerRow.indexOf('LogicalName')
-                let picklist_colNum = headerRow.indexOf('GlobalOptionSet / Options')
+                let picklistName_index = headerRow.indexOf('LogicalName')
+                let referencedEntity_index = headerRow.indexOf(referencedEntity)
 
                 result.forEach(row => {
-                    let picklist_name = row[picklistName_colNum]
-                    let picklist_options = row[picklist_colNum].map(option => {
+                    let picklist_name = row[picklistName_index]
+                    let picklist_options = row[referencedEntity_index][referencedField].map(option => {
                         let value = option['Value']
                         let key = option['Label']['UserLocalizedLabel']['Label']
                         return [key, value]
@@ -506,58 +525,87 @@
                 EntityAttributes[table.name]["PickLists"] = thisPickList
             }))
 
-            // get lookup fields info
+            // get lookup fields info only if has lookup fields
             const pattern = /^_.*_value$/;
             const lookupFields = mappingArray
                 .filter(row => pattern.test(row[0]))
                 .map(row => row[0].replace(/^_/, '').replace(/_value$/, ''));
 
-                // build url
-            entityPath = "RelationshipDefinitions/Microsoft.Dynamics.CRM.OneToManyRelationshipMetadata"
-            selectArr = ['ReferencingEntityNavigationPropertyName', 'ReferencedEntity', 'ReferencedAttribute']
-            filterArr = lookupFields.map(field => `ReferencingAttribute eq '${field}'`);
-            selectCondition = `?$select=${selectArr.join(',')}`
-            filterCondition = `&$filter=ReferencingEntity eq '${EntityLogicalName}' and (${filterArr.join(' or ')})`
+            if (lookupFields.length > 0) {
+                entityPath = "RelationshipDefinitions/Microsoft.Dynamics.CRM.OneToManyRelationshipMetadata"
+                selectArr = ['ReferencingEntityNavigationPropertyName', 'ReferencedEntity', 'ReferencedAttribute', 'ReferencingAttribute']
+                filterArr = lookupFields.map(field => `ReferencingAttribute eq '${field}'`);
+                selectCondition = `?$select=${selectArr.join(',')}`
+                filterCondition = `&$filter=ReferencingEntity eq '${EntityLogicalName}' and (${filterArr.join(' or ')})`
 
                 // get mapping info
-            url = `${resourceDomain}api/data/v9.2/${entityPath}${selectCondition}${filterCondition}`
-            thePromises.push(Read_D365(url).then((result) => {
-                let excludedCols_index = ['MetadataId'].map(fieldName => result[0].indexOf(fieldName))
-                let lookupInfo = result.map(row => row.filter((item, index) => !excludedCols_index.includes(index)))
-                return lookupInfo
-            }).then((lookupInfo) => {
-                let lookupInfo_copy = _.cloneDeep(lookupInfo)
-                let colIndex = lookupInfo_copy.shift().indexOf('ReferencedEntity')
-                filterArr = lookupInfo_copy.map(fieldInfo => `LogicalName eq '${fieldInfo[colIndex]}'`)
+                url = `${resourceDomain}api/data/v9.2/${entityPath}${selectCondition}${filterCondition}`
+                await Read_D365(url).then((result) => {
+                    let excludedCols_index = ['MetadataId'].map(fieldName => result[0].indexOf(fieldName))
+                    let lookupInfo = result.map(row => row.filter((item, index) => !excludedCols_index.includes(index)))
+                    return lookupInfo
+                }).then(async (lookupInfo) => {
+                    let lookupInfo_copy = _.cloneDeep(lookupInfo)
+                    let colIndex = lookupInfo_copy.shift().indexOf('ReferencedEntity')
+                    filterArr = lookupInfo_copy.map(fieldInfo => `LogicalName eq '${fieldInfo[colIndex]}'`)
 
-                entityPath = 'EntityDefinitions'
-                selectCondition = '?$select=LogicalName,EntitySetName,PrimaryIdAttribute'
-                filterCondition = `&$filter=${filterArr.join(' or ') }`
-                // get EntitySetName
-                url = `${resourceDomain}api/data/v9.2/${entityPath}${selectCondition}${filterCondition}&LabelLanguages=1033`
-                Read_D365(url).then((result) => {
-                    let entitySetName_index = result[0].indexOf("EntitySetName")
-                    let entityLogicalName_index = result[0].indexOf("LogicalName")
-                    result.shift()
+                    entityPath = 'EntityDefinitions'
+                    selectCondition = '?$select=LogicalName,EntitySetName,PrimaryNameAttribute'
+                    filterCondition = `&$filter=${filterArr.join(' or ')}`
+                    // get EntitySetName
+                    url = `${resourceDomain}api/data/v9.2/${entityPath}${selectCondition}${filterCondition}&LabelLanguages=1033`
+                    await Read_D365(url).then((result) => {
+                        let entitySetName_index = result[0].indexOf("EntitySetName")
+                        let entityLogicalName_index = result[0].indexOf("LogicalName")
+                        let entityPrimaryName_index = result[0].indexOf("PrimaryNameAttribute")
+                        result.shift()
 
-                    let dict = {}
-                    result.map(fieldInfo => {
-                        dict[fieldInfo[entityLogicalName_index]] = fieldInfo[entitySetName_index]
+                        let dictA = {}
+                        let dictB = {}
+                        result.map(fieldInfo => {
+                            dictA[fieldInfo[entityLogicalName_index]] = fieldInfo[entitySetName_index]
+                            dictB[fieldInfo[entityLogicalName_index]] = fieldInfo[entityPrimaryName_index]
+                        })
+
+                        lookupInfo.forEach((row, index) => {
+                            if (index === 0) {
+                                row.push(...["ReferencedEntitySetName", "ReferencedEntityPrimaryName"])
+                            } else {
+                                row.push(
+                                    ...[dictA[row[lookupInfo[0].indexOf('ReferencedEntity')]], dictB[row[lookupInfo[0].indexOf('ReferencedEntity')]]]
+                                )
+                            }
+                        })
+
+                        // get lookup field mapping table
+                        lookupInfo.map((row, index) => {
+                            if (index === 0) {
+                                return
+                            }
+                            let referencedEntitySetName = row[lookupInfo[0].indexOf('ReferencedEntitySetName')]
+                            let referencedEntityPrimaryId = row[lookupInfo[0].indexOf('ReferencedAttribute')]
+                            let referencedEntityPrimaryName = row[lookupInfo[0].indexOf('ReferencedEntityPrimaryName')]
+
+                            entityPath = referencedEntitySetName
+                            selectCondition = `?$select=${referencedEntityPrimaryName},${referencedEntityPrimaryId}`
+
+                            url = `${resourceDomain}api/data/v9.2/${entityPath}${selectCondition}`
+                            Read_D365(url).then((result) => {
+                                let excludedCols_index = ['@odata.etag'].map(fieldName => result[0].indexOf(fieldName))
+                                let lookupMapping = result.map(row => row.filter((item, index) => !excludedCols_index.includes(index)))
+                                lookupMapping.shift()
+
+                                let lookupFieldName = `_${row[lookupInfo[0].indexOf("ReferencingAttribute")]}_value`
+                                EntityAttributes[table.name]["LookupRelationship"][lookupFieldName] = {
+                                    'ReferencingEntityNavigationPropertyName': row[lookupInfo[0].indexOf('ReferencingEntityNavigationPropertyName')],
+                                    'ReferencedEntitySetName': row[lookupInfo[0].indexOf('ReferencedEntitySetName')],
+                                    'Picklist': lookupMapping
+                                }
+                            })
+                        })
                     })
-
-                    lookupInfo.forEach((row, index) => {
-                        if (index === 0) {
-                            row.push("ReferencedEntity_SetName")
-                        } else {
-                            row.push(
-                                dict[row[lookupInfo[0].indexOf('ReferencedEntity')]]
-                            )
-                        }
-                    })
-                    EntityAttributes[table.name]["LookupRelationshipInfo"] = lookupInfo
                 })
-            }))
-            
+            }
 
             // get P+ table
             entityPath = table.name
@@ -566,9 +614,48 @@
             thePromises.push(Read_D365(url))
 
             let results = await Promise.all(thePromises);
-            let DataArr = results.at(-1).map(row => 
-                row.map(item => item === null ? '' : item)
-            )
+            let picklist = EntityAttributes[table.name]["PickLists"]
+            let lookupInfo = EntityAttributes[table.name]["LookupRelationship"]
+
+            let picklist_Dict = {}
+            let lookupList_Dict = {}
+            let picklistField_index = []
+            let lookupField_index = []
+            let DataArr = results
+                .at(-1)
+                .map(row => row.map(item => item === null ? '' : item))
+                .map((row, rowNum) => {
+                    if (rowNum === 0) {
+                        row.map((header, colNum) => {
+                            if (picklist[header]) {
+                                picklistField_index.push(colNum)
+
+                                let tempDict = {}
+                                picklist[header].map(option => tempDict[option[1]] = option[0])
+                                picklist_Dict[colNum] = tempDict
+                            } else if (lookupInfo[header]) {
+                                lookupField_index.push(colNum)
+
+                                let tempDict = {}
+                                lookupInfo[header]['Picklist'].map(option => tempDict[option[1]] = option[0])
+                                lookupList_Dict[colNum] = tempDict
+                            }
+                        })
+                    } else {
+                        if (picklistField_index.length > 0) {
+                            picklistField_index.forEach(colNum => {
+                                row[colNum] = row[colNum] !== '' ? picklist_Dict[colNum][row[colNum]] : ''
+                            })
+                        }
+                        if (lookupField_index.length > 0) {
+                            lookupField_index.map(colNum => {
+                                row[colNum] = row[colNum] !== '' ? lookupList_Dict[colNum][row[colNum]] : ''
+                            })
+                        }
+                    }
+                    return row
+                })
+
 
             // Update existing table
             let logicalHeaderNames = DataArr.shift(); // Remove header row
@@ -741,14 +828,15 @@
 
                 if (jsonObj["value"] && jsonObj["value"].length > 0) {
                     for (let fieldName in jsonObj["value"][0]) {
-                        if (typeof jsonObj["value"][0][fieldName] === "object" && jsonObj["value"][0][fieldName] != null) {
-                            for (let relatedField in jsonObj["value"][0][fieldName]) {
-                                let expandedFieldName = `${fieldName} / ${relatedField}`;
-                                headers.push(expandedFieldName);
-                            }
-                        } else {
-                            headers.push(fieldName);
-                        }
+                        //if (typeof jsonObj["value"][0][fieldName] === "object" && jsonObj["value"][0][fieldName] != null) {
+                        //    for (let relatedField in jsonObj["value"][0][fieldName]) {
+                        //        let expandedFieldName = `${fieldName} / ${relatedField}`;
+                        //        headers.push(expandedFieldName);
+                        //    }
+                        //} else {
+                        //    headers.push(fieldName);
+                        //}
+                        headers.push(fieldName)
                     }
 
                     tempArr_5k = [headers];
@@ -757,14 +845,16 @@
                         let itemWithRelatedFields = {};
 
                         for (let cell in row) {
-                            if (typeof row[cell] === "object" && row[cell] !== null) {
-                                for (let field in row[cell]) {
-                                    let relatedFieldName = `${cell} / ${field}`;
-                                    itemWithRelatedFields[relatedFieldName] = row[cell][field];
-                                }
-                            } else {
-                                itemWithRelatedFields[cell] = row[cell];
-                            }
+                            //if (typeof row[cell] === "object" && row[cell] !== null) {
+                            //    for (let field in row[cell]) {
+                            //        let relatedFieldName = `${cell} / ${field}`;
+                            //        itemWithRelatedFields[relatedFieldName] = row[cell][field];
+                            //    }
+                            //} else {
+                            //    itemWithRelatedFields[cell] = row[cell];
+                            //}
+
+                            itemWithRelatedFields[cell] = row[cell];
                         }
 
                         let tempValRow = headers.map((header) => {
