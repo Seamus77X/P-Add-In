@@ -466,34 +466,35 @@
             filterCondition = `&$filter=EntitySetName eq '${table.name}'`
 
             url = `${resourceDomain}api/data/v9.2/${entityPath}${selectCondition}${filterCondition}&LabelLanguages=1033`
-            let EntityLogicalName
-            await Read_D365(url).then((result) => {
+            let EntityLogicalName = await Read_D365(url).then((result) => {
                 EntityAttributes[table.name]["PrimaryID"] = result[1][result[0].indexOf("PrimaryIdAttribute")]
                 EntityAttributes[table.name]["PrimaryName"] = result[1][result[0].indexOf("PrimaryNameAttribute")]
 
-                EntityLogicalName = result[1][result[0].indexOf("LogicalName")]
+                return result[1][result[0].indexOf("LogicalName")]
             })
 
             // get the Field type of the table
             entityPath = `EntityDefinitions(LogicalName='${EntityLogicalName}')/Attributes`
-            selectArr = ['MetadataId', 'LogicalName', 'AttributeType']
+            selectArr = ['LogicalName', 'AttributeType']
             filterArr = mappingArray.map(row => `LogicalName eq '${row[0]}'`)
             selectCondition = `?$select=${selectArr.join(',')}`
             filterCondition = `&$filter=${filterArr.join(' or ')}`
             
             url = `${resourceDomain}api/data/v9.2/${entityPath}${selectCondition}${filterCondition}&LabelLanguages=1033`;
             thePromises.push(Read_D365(url).then((result) => {
-                let excludedCols_index = ['MetadataId', '@odata.type'].map(fieldName => result[0].indexOf(fieldName))
-                let properties = result.map(row => row.filter((item, index) => !excludedCols_index.includes(index)))
+                let wantedCols_index = ['LogicalName', 'AttributeType'].map(fieldName => result[0].indexOf(fieldName))
+                let properties = result.map(row => row.filter((item, index) => wantedCols_index.includes(index)))
+                properties.shift()
 
-                EntityAttributes[table.name]["AttributeType"] = properties
                 // add type for lookup field
                 mappingArray.map((row) => {
                     const pattern = /^_.*_value$/;
                     if (pattern.test(row[0])) {
-                        EntityAttributes[table.name]["AttributeType"].push([row[0],'Lookup'])
+                        properties.push([row[0], 'Lookup'])
                     }
                 })
+
+                return properties
             }))
 
             // get the PickLists Field Properties of the table
@@ -525,7 +526,7 @@
                     thisPickList[picklist_name] = picklist_options
                 }) 
 
-                EntityAttributes[table.name]["PickLists"] = thisPickList
+                return thisPickList
             }))
 
             // get lookup fields info only if has lookup fields
@@ -541,23 +542,26 @@
                 selectCondition = `?$select=${selectArr.join(',')}`
                 filterCondition = `&$filter=ReferencingEntity eq '${EntityLogicalName}' and (${filterArr.join(' or ')})`
 
-                // get mapping info
+                // get mapping info for lookup fields
                 url = `${resourceDomain}api/data/v9.2/${entityPath}${selectCondition}${filterCondition}`
-                await Read_D365(url).then((result) => {
-                    let excludedCols_index = ['MetadataId'].map(fieldName => result[0].indexOf(fieldName))
-                    let lookupInfo = result.map(row => row.filter((item, index) => !excludedCols_index.includes(index)))
-                    return lookupInfo
-                }).then(async (lookupInfo) => {
-                    let lookupInfo_copy = _.cloneDeep(lookupInfo)
-                    let colIndex = lookupInfo_copy.shift().indexOf('ReferencedEntity')
-                    filterArr = lookupInfo_copy.map(fieldInfo => `LogicalName eq '${fieldInfo[colIndex]}'`)
+                thePromises.push(Read_D365(url).then(async (result) => {
+                    let wantedCols_index = ['ReferencingEntityNavigationPropertyName', 'ReferencedEntity', 'ReferencedAttribute', 'ReferencingAttribute'].map(fieldName => result[0].indexOf(fieldName))
+                    result.forEach((row) => {
+                        row = row.filter((item, index) => wantedCols_index.includes(index))
+                    })
 
+                    let lookupInfo = _.cloneDeep(result)
+                    let headerRow = lookupInfo.shift()
+                    let colIndex = headerRow.indexOf('ReferencedEntity')
+                    
                     entityPath = 'EntityDefinitions'
                     selectCondition = '?$select=LogicalName,EntitySetName,PrimaryNameAttribute'
+                    filterArr = lookupInfo.map(fieldInfo => `LogicalName eq '${fieldInfo[colIndex]}'`)
                     filterCondition = `&$filter=${filterArr.join(' or ')}`
+
                     // get EntitySetName
                     url = `${resourceDomain}api/data/v9.2/${entityPath}${selectCondition}${filterCondition}&LabelLanguages=1033`
-                    await Read_D365(url).then((result) => {
+                    return await Read_D365(url).then(async (result) => {
                         let entitySetName_index = result[0].indexOf("EntitySetName")
                         let entityLogicalName_index = result[0].indexOf("LogicalName")
                         let entityPrimaryName_index = result[0].indexOf("PrimaryNameAttribute")
@@ -565,58 +569,77 @@
 
                         let dictA = {}
                         let dictB = {}
-                        result.map(fieldInfo => {
+                        result.forEach(fieldInfo => {
                             dictA[fieldInfo[entityLogicalName_index]] = fieldInfo[entitySetName_index]
                             dictB[fieldInfo[entityLogicalName_index]] = fieldInfo[entityPrimaryName_index]
                         })
 
-                        lookupInfo.forEach((row, index) => {
-                            if (index === 0) {
-                                row.push(...["ReferencedEntitySetName", "ReferencedEntityPrimaryName"])
-                            } else {
-                                row.push(
-                                    ...[dictA[row[lookupInfo[0].indexOf('ReferencedEntity')]], dictB[row[lookupInfo[0].indexOf('ReferencedEntity')]]]
-                                )
-                            }
+                        headerRow.push(...["ReferencedEntitySetName", "ReferencedEntityPrimaryName"])
+                        lookupInfo.forEach(row => {
+                            row.push(
+                                ...[dictA[row[headerRow.indexOf('ReferencedEntity')]], dictB[row[headerRow.indexOf('ReferencedEntity')]]]
+                            )
                         })
 
                         // get lookup field mapping table
-                        lookupInfo.map((row, index) => {
-                            if (index === 0) {
-                                return
-                            }
-                            let referencedEntitySetName = row[lookupInfo[0].indexOf('ReferencedEntitySetName')]
-                            let referencedEntityPrimaryId = row[lookupInfo[0].indexOf('ReferencedAttribute')]
-                            let referencedEntityPrimaryName = row[lookupInfo[0].indexOf('ReferencedEntityPrimaryName')]
+                        let lookupDicts = {}
+                        let lookupPromises = []
+                        lookupInfo.forEach((row, index) => {
+                            let referencedEntitySetName = row[headerRow.indexOf('ReferencedEntitySetName')]
+                            let referencedEntityPrimaryId = row[headerRow.indexOf('ReferencedAttribute')]
+                            let referencedEntityPrimaryName = row[headerRow.indexOf('ReferencedEntityPrimaryName')]
 
                             entityPath = referencedEntitySetName
                             selectCondition = `?$select=${referencedEntityPrimaryName},${referencedEntityPrimaryId}`
 
                             url = `${resourceDomain}api/data/v9.2/${entityPath}${selectCondition}`
-                            Read_D365(url).then((result) => {
+                            lookupPromises.push(Read_D365(url).then((result) => {
                                 let wantedCols_index = [referencedEntityPrimaryName, referencedEntityPrimaryId].map(fieldName => result[0].indexOf(fieldName))
-                                let lookupMapping = result.map(row => row.filter((item, index) => wantedCols_index.includes(index)))
-                                lookupMapping.shift()
+                                let filteredResult = result
+                                    .map(row => row.filter((item, index) => wantedCols_index.includes(index)))
+                                filteredResult.shift()
 
-                                let lookupFieldName = `_${row[lookupInfo[0].indexOf("ReferencingAttribute")]}_value`
-                                EntityAttributes[table.name]["LookupRelationship"][lookupFieldName] = {
-                                    'ReferencingEntityNavigationPropertyName': row[lookupInfo[0].indexOf('ReferencingEntityNavigationPropertyName')],
-                                    'ReferencedEntitySetName': row[lookupInfo[0].indexOf('ReferencedEntitySetName')],
-                                    'Picklist': lookupMapping
+                                let lookupFieldName = `_${row[headerRow.indexOf("ReferencingAttribute")]}_value`
+                                lookupDicts[lookupFieldName] = {
+                                    'ReferencingEntityNavigationPropertyName': row[headerRow.indexOf('ReferencingEntityNavigationPropertyName')],
+                                    'ReferencedEntitySetName': row[headerRow.indexOf('ReferencedEntitySetName')],
+                                    'ReferencedEntityData': filteredResult
                                 }
-                            })
+                            }))
                         })
+
+                        await Promise.all(lookupPromises)
+                        return lookupDicts
                     })
-                })
+                }))
             }
 
             // get P+ table
             entityPath = table.name
             selectCondition = `?$select=${mappingArray.map(entry => entry[0]).join(',')}`;
+            let sortCondition = `&$orderby=modifiedon asc`
             url = `${resourceDomain}api/data/v9.2/${entityPath}${selectCondition}`;
-            thePromises.push(Read_D365(url))
+            thePromises.push(Read_D365(url).then((result) => {
+                // convert null to empty string which means empty cell in Excel table
+                return result.map(row =>
+                    row.map(item => item === null ? '' : item)
+                )
+            }))
 
-            let results = await Promise.all(thePromises);
+            let DataArr
+            await Promise.all(thePromises).then((Results) => {
+                EntityAttributes[table.name]["AttributeType"] = Results[0]
+                EntityAttributes[table.name]["PickLists"] = Results[1]
+
+                if (Results.length === 3) {
+                    DataArr = Results[2]
+                } else if (Results.length === 4) {
+                    EntityAttributes[table.name]["LookupRelationship"] = Results[2]
+                    DataArr = Results[3]
+                }
+            })
+
+            // convert lookup and picklist fields to display value
             let picklist = EntityAttributes[table.name]["PickLists"]
             let lookupInfo = EntityAttributes[table.name]["LookupRelationship"]
 
@@ -624,40 +647,36 @@
             let lookupList_Dict = {}
             let picklistField_index = []
             let lookupField_index = []
-            let DataArr = results
-                .at(-1)
-                .map(row => row.map(item => item === null ? '' : item))
-                .map((row, rowNum) => {
-                    if (rowNum === 0) {
-                        row.map((header, colNum) => {
-                            if (picklist[header]) {
-                                picklistField_index.push(colNum)
+            DataArr.forEach((row, rowNum) => {
+                if (rowNum === 0) {
+                    row.map((header, colNum) => {
+                        if (picklist[header]) {
+                            picklistField_index.push(colNum)
 
-                                let tempDict = {}
-                                picklist[header].map(option => tempDict[option[1]] = option[0])
-                                picklist_Dict[colNum] = tempDict
-                            } else if (lookupInfo[header]) {
-                                lookupField_index.push(colNum)
+                            let tempDict = {}
+                            picklist[header].map(option => tempDict[option[1]] = option[0])
+                            picklist_Dict[colNum] = tempDict
+                        } else if (lookupInfo[header]) {
+                            lookupField_index.push(colNum)
 
-                                let tempDict = {}
-                                lookupInfo[header]['Picklist'].map(option => tempDict[option[1]] = option[0])
-                                lookupList_Dict[colNum] = tempDict
-                            }
+                            let tempDict = {}
+                            lookupInfo[header]['ReferencedEntityData'].map(option => tempDict[option[1]] = option[0])
+                            lookupList_Dict[colNum] = tempDict
+                        }
+                    })
+                } else {
+                    if (picklistField_index.length > 0) {
+                        picklistField_index.forEach(colNum => {
+                            row[colNum] = row[colNum] !== '' ? picklist_Dict[colNum][row[colNum]] : ''
                         })
-                    } else {
-                        if (picklistField_index.length > 0) {
-                            picklistField_index.forEach(colNum => {
-                                row[colNum] = row[colNum] !== '' ? picklist_Dict[colNum][row[colNum]] : ''
-                            })
-                        }
-                        if (lookupField_index.length > 0) {
-                            lookupField_index.map(colNum => {
-                                row[colNum] = row[colNum] !== '' ? lookupList_Dict[colNum][row[colNum]] : ''
-                            })
-                        }
                     }
-                    return row
-                })
+                    if (lookupField_index.length > 0) {
+                        lookupField_index.map(colNum => {
+                            row[colNum] = row[colNum] !== '' ? lookupList_Dict[colNum][row[colNum]] : ''
+                        })
+                    }
+                }
+            })
 
 
             // Update existing table
@@ -678,6 +697,7 @@
             const dataBodyRange = table.getDataBodyRange().load('address');
             await context.sync();
 
+            // convert P+ Logical Field Name to EACB Display Field Name
             const firstRowFormulas = firstRowRange.formulas[0];
             const updatedData = DataArr.map(row => {
                 return table.columns.items.map(column => {
@@ -706,12 +726,113 @@
             startRow = parseInt(newRangeAddress.match(/\d+/), 10);
             let headerRowNumber = startRow - 1;
             let resizedRangeAddress = newRangeAddress.replace(/\d+/, headerRowNumber);
-
             let resizedRange = sheet.getRange(resizedRangeAddress);
-            table.resize(resizedRange);
 
+            table.resize(resizedRange);
             resizedRange.format.autofitColumns();
             resizedRange.format.autofitRows();
+
+            await context.sync()
+
+            // Add Format and Drop Down List for the table
+            let FielDataType_Mapping = EntityAttributes[table.name]["AttributeType"].map((field) => {
+                let fieldLogicalName = field[0]
+                let fieldAttributeType = field[1]
+
+                let fieldDisplayName = mappingArray.find(entry => entry[0] === fieldLogicalName)[1]
+                return [fieldDisplayName, fieldAttributeType]
+            })
+            let tableHeaderColNames = table.columns.items.map(column => column.name)
+            FielDataType_Mapping.forEach((field) => {
+                let fieldDisplayName = field[0]
+                let fieldAttributeType = field[1]
+
+                let colIndex = tableHeaderColNames.indexOf(fieldDisplayName)
+                if (colIndex === -1) { return }
+
+                let colRange = table.columns.getItemAt(colIndex).getDataBodyRange()
+                //colRange.dataValidation.clear()
+                switch (fieldAttributeType) {
+                    case "Lookup": // data validation - List
+                        colRange.numberFormat = [["@"]]
+                        colRange.dataValidation.rule = {
+                            list: {
+                                inCellDropDown: true,
+                                source: [1,2,3].join(",") // Join the array into a comma-separated string
+                            }
+                        }
+                        break
+                    case "Picklist": // data validation - List
+                        colRange.numberFormat = [["@"]]
+                        colRange.dataValidation.rule = {
+                            list: {
+                                inCellDropDown: true,
+                                source: [1, 2, 3].join(",") // Join the array into a comma-separated string
+                            }
+                        }
+                        break
+                    case "Boolean": // data validation - List
+                        colRange.numberFormat = [["@"]]
+                        colRange.dataValidation.rule = {
+                            list: {
+                                inCellDropDown: true,
+                                source: [1, 2, 3].join(",") // Join the array into a comma-separated string
+                            }
+                        }
+                        break
+                    case "DateTime": // long date 
+                        colRange.numberFormat = [["dd/mm/yyyy hh:mm:ss AM/PM"]]
+                        break
+                    case "Decimal": // Number
+                        colRange.numberFormat = [["#,##0.00"]]
+                        break
+                    case "Double": // Number
+                        colRange.numberFormat = [["#,##0.00"]]
+                        break
+                    case "Integer": // data validation - List
+                        colRange.numberFormat = [["#,##0"]]
+                        colRange.dataValidation.rule = {
+                            list: {
+                                inCellDropDown: true,
+                                source: [1, 2, 3].join(",") // Join the array into a comma-separated string
+                            }
+                        }
+                        break
+                    case "Money": // Currency
+                        colRange.numberFormat = [["$#,##0.00;[Red]-$#,##0.00"]]
+                        break
+                    case "String": // Text
+                        colRange.numberFormat = [["@"]]
+                        break
+                    case "Memo": // Text
+                        colRange.numberFormat = [["@"]]
+                        break
+                    case "Status": // data validation  - List
+                        colRange.numberFormat = [["@"]]
+                        colRange.dataValidation.rule = {
+                            list: {
+                                inCellDropDown: true,
+                                source: [1, 2, 3].join(",") // Join the array into a comma-separated string
+                            }
+                        }
+                        break
+                    case "State": // data validation - List
+                        colRange.numberFormat = [["@"]]
+                        colRange.dataValidation.rule = {
+                            list: {
+                                inCellDropDown: true,
+                                source: [1, 2, 3].join(",") // Join the array into a comma-separated string
+                            }
+                        }
+                        break
+                    case "Uniqueidentifier":
+                        colRange.numberFormat = [["@"]]
+                        break
+                    default:
+                        colRange.numberFormat = [["General"]]
+                        break
+                }
+            })
 
             await context.sync();
 
