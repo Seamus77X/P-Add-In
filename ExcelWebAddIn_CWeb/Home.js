@@ -8,6 +8,7 @@
     let accessToken;  // used to store user's access token
     let runningEnvir
     let ThisWorkbook_GUID
+    let DropDownList_DeafultWorksheet = "Lookup"
     let pp_eacb_rowIdMapping = {}
     let pp_eacb_fieldNameMapping = {
         'sensei_lessonslearned': [
@@ -523,7 +524,13 @@
                         let key = option['Label']['UserLocalizedLabel']['Label']
                         return [key, value]
                     })
-                    thisPickList[picklist_name] = picklist_options
+
+                    let sortedFilteredOptions = picklist_options
+                        .map(item => `${item[0]}|[]|${item[1]}`)
+                        .sort((a, b) => a.localeCompare(b, 'en', { numeric: true, ignorePunctuation: true }))
+                        .map(item => [...item.split('|[]|')])
+
+                    thisPickList[picklist_name] = sortedFilteredOptions
                 }) 
 
                 return thisPickList
@@ -593,18 +600,123 @@
                             selectCondition = `?$select=${referencedEntityPrimaryName},${referencedEntityPrimaryId}`
 
                             url = `${resourceDomain}api/data/v9.2/${entityPath}${selectCondition}`
-                            lookupPromises.push(Read_D365(url).then((result) => {
+                            lookupPromises.push(Read_D365(url).then(async (result) => {
                                 let wantedCols_index = [referencedEntityPrimaryName, referencedEntityPrimaryId].map(fieldName => result[0].indexOf(fieldName))
                                 let filteredResult = result
                                     .map(row => row.filter((item, index) => wantedCols_index.includes(index)))
                                 filteredResult.shift()
 
+                                let sortedFilteredResult = filteredResult
+                                    .map(item => `${item[0]}|[]|${item[1]}`)
+                                    .sort((a, b) => a.localeCompare(b, 'en', { numeric: true, ignorePunctuation: true }))
+                                    .map(item => [...item.split('|[]|')])
+
                                 let lookupFieldName = `_${row[headerRow.indexOf("ReferencingAttribute")]}_value`
+
+                                // Paste the long dropdown list into Excel only if its length > 8190
+                                let DropdownListAddress
+                                let dropDownList = filteredResult
+                                    .map(item => item[0])
+                                    .sort((a, b) => a.localeCompare(b, 'en', { numeric: true, ignorePunctuation: true }))
+                                    .map((item, index) => [`${index + 1}. ${item}`])
+
+                                if (dropDownList.join(",").length > 8190) {
+                                    await Excel.run(async (context) => {
+                                        const worksheets = context.workbook.worksheets;
+                                        worksheets.load('items/tables/items/name, items/tables/items/id, items/tables/items/columns/items/name, items/tables/items/columns/items/index');
+                                        await context.sync();
+
+                                        for (const sheet of worksheets.items) {
+                                            for (const excelTable of sheet.tables.items) {
+                                                if (excelTable.name === `${table.name}_${lookupFieldName}`) {
+                                                    const dataBodyRange = excelTable.getDataBodyRange();
+                                                    dataBodyRange.load('address');
+
+                                                    await context.sync()
+
+                                                    excelTable.getDataBodyRange().clear()
+
+                                                    // Paste the updated data into Excel
+                                                    let startRow = parseInt(dataBodyRange.address.split("!")[1].match(/\d+/), 10);
+                                                    let newEndRow = startRow + dropDownList.length - 1;
+                                                    let newRangeAddress = dataBodyRange.address.split("!")[1].replace(/\d+$/, newEndRow);
+
+                                                    DropdownListAddress = `${dataBodyRange.address.split("!")[0]}!${newRangeAddress}`
+
+                                                    const updatedRange = sheet.getRange(newRangeAddress);
+                                                    updatedRange.values = dropDownList;
+
+                                                    // Resize the table including the header row
+                                                    startRow = parseInt(newRangeAddress.match(/\d+/), 10);
+                                                    let headerRowNumber = startRow - 1;
+                                                    let resizedRangeAddress = newRangeAddress.replace(/\d+/, headerRowNumber);
+                                                    let resizedRange = sheet.getRange(resizedRangeAddress);
+
+                                                    excelTable.resize(resizedRange);
+
+                                                    resizedRange.format.autofitColumns();
+                                                    resizedRange.format.autofitRows();
+
+                                                    break
+                                                }
+                                            }
+                                            if (DropdownListAddress) {
+                                                break
+                                            }
+                                        }
+
+                                        try {
+                                            // Check if the DropdownListAddress is undefined
+                                            if (DropdownListAddress === undefined) {
+                                                // Get the worksheet named "Lookup"
+                                                let lookupSheet = context.workbook.worksheets.getItem("Lookup");
+                                                // Get the used range of the worksheet
+                                                let usedRange = lookupSheet.getUsedRange();
+                                                // Load the address and column count of the used range
+                                                usedRange.load(['address', 'columnCount']);
+                                                // Run the queued commands
+                                                await context.sync()
+
+                                                // Calculate the address for the new table's range
+                                                let newTableEndRow = dropDownList.length + 1;
+                                                let newTableColumn = columnNumberToName(usedRange.columnCount + 1)
+                                                let newTableAddress = `${newTableColumn}1:${newTableColumn}${newTableEndRow}`;
+                                                let dataBodyRange = `${newTableColumn}2:${newTableColumn}${newTableEndRow}`;
+
+                                                DropdownListAddress = 'Lookup!' + dataBodyRange
+
+                                                // Set the values and add a new table at the calculated address
+                                                let tablRange = lookupSheet.getRange(newTableAddress)
+                                                tablRange.values = [[`[${table.name}] - [${lookupFieldName}]`], ...dropDownList]
+                                                let thisTable = context.workbook.tables.add(newTableAddress, true);
+                                                thisTable.name = `${table.name}_${lookupFieldName}`;
+
+                                                tablRange.format.autofitColumns();
+                                                tablRange.format.autofitRows();
+
+                                                // Run the queued commands
+                                                await context.sync()
+                                            }
+                                        } catch (error) {
+                                            if (error instanceof OfficeExtension.Error && error.code === 'ItemNotFound') {
+                                                errorHandler("Worksheet [Lookup] is not found.\nPlease ensure the name of the worksheet [Lookup] is correct and that the worksheet has not been deleted.");
+                                            } else {
+                                                // Handle other errors
+                                                errorHandler(error.message);
+                                            }
+                                        }
+                                    })
+                                } else {
+                                    DropdownListAddress = "ReferToArray"
+                                }
+
                                 lookupDicts[lookupFieldName] = {
                                     'ReferencingEntityNavigationPropertyName': row[headerRow.indexOf('ReferencingEntityNavigationPropertyName')],
                                     'ReferencedEntitySetName': row[headerRow.indexOf('ReferencedEntitySetName')],
-                                    'ReferencedEntityData': filteredResult
+                                    'ReferencedEntityData': sortedFilteredResult,
+                                    'DropdownListAddress': DropdownListAddress
                                 }
+
                             }))
                         })
 
@@ -638,7 +750,7 @@
                     DataArr = Results[3]
                 }
             })
-
+              
             // convert lookup and picklist fields to display value
             let picklist = EntityAttributes[table.name]["PickLists"]
             let lookupInfo = EntityAttributes[table.name]["LookupRelationship"]
@@ -740,72 +852,251 @@
                 let fieldAttributeType = field[1]
 
                 let fieldDisplayName = mappingArray.find(entry => entry[0] === fieldLogicalName)[1]
-                return [fieldDisplayName, fieldAttributeType]
+                return [fieldLogicalName, fieldDisplayName, fieldAttributeType]
             })
             let tableHeaderColNames = table.columns.items.map(column => column.name)
             FielDataType_Mapping.forEach((field) => {
-                let fieldDisplayName = field[0]
-                let fieldAttributeType = field[1]
+                let fieldLogicalName = field[0]
+                let fieldDisplayName = field[1]
+                let fieldAttributeType = field[2]
 
                 let colIndex = tableHeaderColNames.indexOf(fieldDisplayName)
                 if (colIndex === -1) { return }
 
+                
+                
                 let colRange = table.columns.getItemAt(colIndex).getDataBodyRange()
                 //colRange.dataValidation.clear()
                 switch (fieldAttributeType) {
                     case "Lookup": // data validation - List
+                        let DropdownListSource
+                        let DropDownListSourceAddress = EntityAttributes[table.name]['LookupRelationship'][fieldLogicalName]['DropdownListAddress']
+
+                        if (DropDownListSourceAddress === 'ReferToArray') {
+                            let DropdownList = EntityAttributes[table.name]['LookupRelationship'][fieldLogicalName]['ReferencedEntityData']
+                                .map((item, index) => `${index + 1}. ${item[0]}`)
+                                .join(",") // Join the array into a comma-separated string
+                            DropdownListSource = DropdownList
+                        } else {
+                            DropdownListSource = `=${DropDownListSourceAddress}`
+                        }
+
                         colRange.numberFormat = [["@"]]
                         colRange.dataValidation.rule = {
                             list: {
                                 inCellDropDown: true,
-                                source: [1,2,3].join(",") // Join the array into a comma-separated string
+                                source: DropdownListSource
                             }
                         }
+                        colRange.dataValidation.prompt = {
+                            message: "Please choose an option from the list.",
+                            showPrompt: true,
+                            title: "Selection Required"
+                        };
+                        colRange.dataValidation.errorAlert = {
+                            message: "This entry is not on the list. Please select a valid option from the dropdown.",
+                            showAlert: true,
+                            style: Excel.DataValidationAlertStyle.stop,
+                            title: "Selection Error"
+                        };
                         break
                     case "Picklist": // data validation - List
+                        let PickList = EntityAttributes[table.name]['PickLists'][fieldLogicalName]
+                            .map((item, index) => `${index + 1}. ${item[0]}`)
+                            .join(",")  // Join the array into a comma-separated string
+
                         colRange.numberFormat = [["@"]]
                         colRange.dataValidation.rule = {
                             list: {
                                 inCellDropDown: true,
-                                source: [1, 2, 3].join(",") // Join the array into a comma-separated string
+                                source: PickList 
                             }
                         }
+                        colRange.dataValidation.prompt = {
+                            message: "Please choose an option from the list.",
+                            showPrompt: true,
+                            title: "Selection Required"
+                        };
+                        colRange.dataValidation.errorAlert = {
+                            message: "This entry is not on the list. Please select a valid option from the dropdown.",
+                            showAlert: true,
+                            style: Excel.DataValidationAlertStyle.stop,
+                            title: "Selection Error"
+                        };
                         break
                     case "Boolean": // data validation - List
                         colRange.numberFormat = [["@"]]
                         colRange.dataValidation.rule = {
                             list: {
                                 inCellDropDown: true,
-                                source: [1, 2, 3].join(",") // Join the array into a comma-separated string
+                                source: ['true', 'false'].join(",") // Join the array into a comma-separated string
                             }
                         }
+                        colRange.dataValidation.prompt = {
+                            message: "Please choose an option from the list.",
+                            showPrompt: true,
+                            title: "Selection Required"
+                        };
+                        colRange.dataValidation.errorAlert = {
+                            message: "This entry is not on the list. Please select a valid option from the dropdown.",
+                            showAlert: true,
+                            style: Excel.DataValidationAlertStyle.stop,
+                            title: "Selection Error"
+                        };
                         break
                     case "DateTime": // long date 
                         colRange.numberFormat = [["dd/mm/yyyy hh:mm:ss AM/PM"]]
+                        colRange.dataValidation.rule = {
+                            date: {
+                                operator: Excel.DataValidationOperator.greaterThanOrEqual,
+                                formula1: 0
+                            }
+                        }
+                        colRange.dataValidation.prompt = {
+                            message: "Please enter a date in the format DD/MM/YYYY.",
+                            showPrompt: true,
+                            title: "Enter Date"
+                        };
+                        colRange.dataValidation.errorAlert = {
+                            message: "Invalid entry. Please ensure the value is a date in the format MM/DD/YYYY.",
+                            showAlert: true,
+                            style: Excel.DataValidationAlertStyle.stop,
+                            title: "Invalid Date Format"
+                        }
                         break
                     case "Decimal": // Number
                         colRange.numberFormat = [["#,##0.00"]]
+                        colRange.dataValidation.rule = {
+                            decimal: {
+                                type: Excel.DataValidationType.decimal,
+                                operator: Excel.DataValidationOperator.greaterThanOrEqual,
+                                formula1: -9.999999999999e+253,
+                                ignoreBlanks: true
+                            }
+                        }
+                        colRange.dataValidation.prompt = {
+                            message: "Please enter a decimal number (e.g., 123.45).",
+                            showPrompt: true,
+                            title: "Enter Decimal"
+                        };
+                        colRange.dataValidation.errorAlert = {
+                            message: "Invalid entry. Please ensure the value is a decimal number (e.g., 123.45).",
+                            showAlert: true,
+                            style: Excel.DataValidationAlertStyle.stop,
+                            title: "Invalid Decimal Format"
+                        };
                         break
                     case "Double": // Number
                         colRange.numberFormat = [["#,##0.00"]]
+                        colRange.dataValidation.rule = {
+                            decimal: {
+                                type: Excel.DataValidationType.decimal,
+                                operator: Excel.DataValidationOperator.greaterThanOrEqual,
+                                formula1: -9.999999999999e+253,
+                                ignoreBlanks: true
+                            }
+                        }
+                        colRange.dataValidation.prompt = {
+                            message: "Please enter a decimal number (e.g., 123.45).",
+                            showPrompt: true,
+                            title: "Enter Decimal"
+                        };
+                        colRange.dataValidation.errorAlert = {
+                            message: "Invalid entry. Please ensure the value is a decimal number (e.g., 123.45).",
+                            showAlert: true,
+                            style: Excel.DataValidationAlertStyle.stop,
+                            title: "Invalid Decimal Format"
+                        };
                         break
                     case "Integer": // data validation - List
                         colRange.numberFormat = [["#,##0"]]
                         colRange.dataValidation.rule = {
-                            list: {
-                                inCellDropDown: true,
-                                source: [1, 2, 3].join(",") // Join the array into a comma-separated string
+                            wholeNumber: {
+                                type: Excel.DataValidationType.wholeNumber,
+                                operator: Excel.DataValidationOperator.greaterThanOrEqual,
+                                formula1: -9.999999999999e+253,
+                                ignoreBlanks: true
                             }
                         }
+                        colRange.dataValidation.prompt = {
+                            message: "Please enter a whole number.",
+                            showPrompt: true,
+                            title: "Enter Whole Number"
+                        };
+                        range.dataValidation.errorAlert = {
+                            message: "Invalid entry. Please ensure the value is a whole number.",
+                            showAlert: true,
+                            style: Excel.DataValidationAlertStyle.stop,
+                            title: "Invalid Whole Number"
+                        };
                         break
                     case "Money": // Currency
                         colRange.numberFormat = [["$#,##0.00;[Red]-$#,##0.00"]]
+                        colRange.dataValidation.rule = {
+                            decimal: {
+                                type: Excel.DataValidationType.decimal,
+                                operator: Excel.DataValidationOperator.greaterThanOrEqual,
+                                formula1: -9.999999999999e+253,
+                                ignoreBlanks: true
+                            }
+                        }
+                        colRange.dataValidation.prompt = {
+                            message: "Please enter a decimal number (e.g., 123.45).",
+                            showPrompt: true,
+                            title: "Enter Decimal"
+                        };
+                        colRange.dataValidation.errorAlert = {
+                            message: "Invalid entry. Please ensure the value is a decimal number (e.g., 123.45).",
+                            showAlert: true,
+                            style: Excel.DataValidationAlertStyle.stop,
+                            title: "Invalid Decimal Format"
+                        };
                         break
                     case "String": // Text
                         colRange.numberFormat = [["@"]]
+                        colRange.dataValidation.rule = {
+                            textLength: {
+                                type: Excel.DataValidationType.textLength,
+                                operator: Excel.DataValidationOperator.between,
+                                formula1: 23,
+                                formula2: 67,
+                                ignoreBlanks: true
+                            }
+                        };
+                        colRange.dataValidation.prompt = {
+                            message: "Please enter a text between 23 and 67 characters.",
+                            showPrompt: true,
+                            title: "Required Text Length"
+                        };
+                        colRange.dataValidation.errorAlert = {
+                            message: "The text entered does not meet the length requirements. It must be between 23 and 67 characters.",
+                            showAlert: true,
+                            style: Excel.DataValidationAlertStyle.stop,
+                            title: "Text Length Error"
+                        };
                         break
                     case "Memo": // Text
                         colRange.numberFormat = [["@"]]
+                        colRange.dataValidation.rule = {
+                            textLength: {
+                                type: Excel.DataValidationType.textLength,
+                                operator: Excel.DataValidationOperator.between,
+                                formula1: 23,
+                                formula2: 67,
+                                ignoreBlanks: true
+                            }
+                        };
+                        colRange.dataValidation.prompt = {
+                            message: "Please enter a text between 23 and 67 characters.",
+                            showPrompt: true,
+                            title: "Required Text Length"
+                        };
+                        colRange.dataValidation.errorAlert = {
+                            message: "The text entered does not meet the length requirements. It must be between 23 and 67 characters.",
+                            showAlert: true,
+                            style: Excel.DataValidationAlertStyle.stop,
+                            title: "Text Length Error"
+                        };
                         break
                     case "Status": // data validation  - List
                         colRange.numberFormat = [["@"]]
@@ -815,6 +1106,17 @@
                                 source: [1, 2, 3].join(",") // Join the array into a comma-separated string
                             }
                         }
+                        colRange.dataValidation.prompt = {
+                            message: "Please choose an option from the list.",
+                            showPrompt: true,
+                            title: "Selection Required"
+                        };
+                        colRange.dataValidation.errorAlert = {
+                            message: "This entry is not on the list. Please select a valid option from the dropdown.",
+                            showAlert: true,
+                            style: Excel.DataValidationAlertStyle.stop,
+                            title: "Selection Error"
+                        };
                         break
                     case "State": // data validation - List
                         colRange.numberFormat = [["@"]]
@@ -824,6 +1126,17 @@
                                 source: [1, 2, 3].join(",") // Join the array into a comma-separated string
                             }
                         }
+                        colRange.dataValidation.prompt = {
+                            message: "Please choose an option from the list.",
+                            showPrompt: true,
+                            title: "Selection Required"
+                        };
+                        colRange.dataValidation.errorAlert = {
+                            message: "This entry is not on the list. Please select a valid option from the dropdown.",
+                            showAlert: true,
+                            style: Excel.DataValidationAlertStyle.stop,
+                            title: "Selection Error"
+                        };
                         break
                     case "Uniqueidentifier":
                         colRange.numberFormat = [["@"]]
