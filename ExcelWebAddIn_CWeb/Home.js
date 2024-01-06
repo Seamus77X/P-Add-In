@@ -12,7 +12,6 @@
     let pp_eacb_rowIdMapping = {}
     let pp_eacb_fieldNameMapping = {
         'sensei_lessonslearned': [
-            ["sensei_lessonlearnedid", "Row ID"],
             ["modifiedon", "Entry Date"],
             ["sensei_name", "Title"],
             ["sensei_category", "Category"],
@@ -21,7 +20,8 @@
             ["sc_projectimpact", "Project Impact"],
             ["sensei_observation", "When is it likely to occur/when did it occur"],
             ["sensei_recommendation", "Recommendations"],
-            ["sc_additionalcommentsnotes", "Additional Comments/Notes"]
+            ["sc_additionalcommentsnotes", "Additional Comments/Notes"],
+            ["utcconversiontimezonecode",'Time Zone']
         ],
         'sensei_risks': [
             ["sc_riskdescription", "Description"],
@@ -240,10 +240,13 @@
                 //////////////////////////////////////////////////
                 Office.actions.associate("buttonFunction", function (event) {
                     console.log('Hey, you just pressed a ribbon button.')
-                    Create_D365('sensei_lessonslearned', { 'sensei_category': '100000001', 'sc_Discipline@odata.bind': '/sc_disciplines(0f49df58-4d91-ec11-8d20-00224815a133)' }, EntityAttributes['sensei_lessonslearned']["PrimaryID"])
+                    //Create_D365('sensei_lessonslearned', { 'sensei_category': '100000001', 'sc_Discipline@odata.bind': '/sc_disciplines(0f49df58-4d91-ec11-8d20-00224815a133)' }, EntityAttributes['sensei_lessonslearned']["PrimaryID"])
 
                     console.log(pp_eacb_rowIdMapping)
                     console.log(EntityAttributes)
+
+                    let a = Read_D365("https://gsis-pmo-australia-sensei-demo.crm6.dynamics.com/api/data/v9.2/EntityDefinitions(LogicalName='sensei_lessonlearned')/Attributes?$filter=LogicalName eq 'sensei_name' or LogicalName eq 'importsequencenumber'")
+                    console.log(a)
 
                     event.completed();
                 })
@@ -475,28 +478,55 @@
             })
 
             // get the Field type of the table
-            entityPath = `EntityDefinitions(LogicalName='${EntityLogicalName}')/Attributes`
-            selectArr = ['LogicalName', 'AttributeType']
-            filterArr = mappingArray.map(row => `LogicalName eq '${row[0]}'`)
-            selectCondition = `?$select=${selectArr.join(',')}`
-            filterCondition = `&$filter=${filterArr.join(' or ')}`
-            
-            url = `${resourceDomain}api/data/v9.2/${entityPath}${selectCondition}${filterCondition}&LabelLanguages=1033`;
-            thePromises.push(Read_D365(url).then((result) => {
-                let wantedCols_index = ['LogicalName', 'AttributeType'].map(fieldName => result[0].indexOf(fieldName))
-                let properties = result.map(row => row.filter((item, index) => wantedCols_index.includes(index)))
-                properties.shift()
+            let promises = [];
 
-                // add type for lookup field
-                mappingArray.map((row) => {
-                    const pattern = /^_.*_value$/;
-                    if (pattern.test(row[0])) {
-                        properties.push([row[0], 'Lookup'])
+            mappingArray.forEach(row => {
+                const pattern = /^_.*_value$/;
+                if (pattern.test(row[0])) {
+                    promises.push([row[0], 'Lookup', null])
+                    return 
+                }
+
+                const entityPath = `EntityDefinitions(LogicalName='${EntityLogicalName}')/Attributes`;
+                const filterCondition = `?$filter=LogicalName eq '${row[0]}'`
+                const url = `${resourceDomain}api/data/v9.2/${entityPath}${filterCondition}`;
+
+                const promise = Read_D365(url).then(result => {
+                    // Extracting header and data from result
+                    const header = result[0];
+                    const data = result[1];
+
+                    // Initial attributes array with LogicalName and AttributeType
+                    const attributes = [
+                        data[header.indexOf('LogicalName')],
+                        data[header.indexOf('AttributeType')]
+                    ];
+
+                    // Collecting additional non-null attributes
+                    const additionalInfo = {};
+                    ['MaxLength', 'MaxValue', 'MinValue', 'MaxSupportedValue', 'MinSupportedValue', 'DefaultValue'].forEach(field => {
+                        const value = data[header.indexOf(field)];
+                        if (value !== null && value !== undefined) {
+                            additionalInfo[field] = value;
+                        }
+                    });
+
+                    // Adding additionalInfo as the third element if it's not empty
+                    if (Object.keys(additionalInfo).length > 0) {
+                        attributes.push(additionalInfo);
+                    } else {
+                        attributes.push(null)
                     }
-                })
 
-                return properties
-            }))
+                    return attributes
+                });
+
+                promises.push(promise);
+            });
+
+            // Waiting for all promises to resolve
+            thePromises.push(Promise.all(promises));
+
 
             // get the PickLists Field Properties of the table
             entityPath = `EntityDefinitions(LogicalName='${EntityLogicalName}')/Attributes/Microsoft.Dynamics.CRM.PicklistAttributeMetadata`
@@ -740,6 +770,7 @@
 
             let DataArr
             await Promise.all(thePromises).then((Results) => {
+                // add type for lookup field
                 EntityAttributes[table.name]["AttributeType"] = Results[0]
                 EntityAttributes[table.name]["PickLists"] = Results[1]
 
@@ -754,11 +785,18 @@
             // convert lookup and picklist fields to display value
             let picklist = EntityAttributes[table.name]["PickLists"]
             let lookupInfo = EntityAttributes[table.name]["LookupRelationship"]
+            let dateTimeColl = EntityAttributes[table.name]["AttributeType"]
+                .map((field, index) => {
+                    if (field[1] === 'DateTime') {
+                        return field[0];
+                    }})
+                .filter(field => field !== undefined);
 
             let picklist_Dict = {}
             let lookupList_Dict = {}
             let picklistField_index = []
             let lookupField_index = []
+            let dateTime_index = []
             DataArr.forEach((row, rowNum) => {
                 if (rowNum === 0) {
                     row.map((header, colNum) => {
@@ -774,6 +812,8 @@
                             let tempDict = {}
                             lookupInfo[header]['ReferencedEntityData'].map(option => tempDict[option[1]] = option[0])
                             lookupList_Dict[colNum] = tempDict
+                        } else if (dateTimeColl.includes(header)) {
+                            dateTime_index.push(colNum)
                         }
                     })
                 } else {
@@ -785,6 +825,31 @@
                     if (lookupField_index.length > 0) {
                         lookupField_index.map(colNum => {
                             row[colNum] = row[colNum] !== '' ? lookupList_Dict[colNum][row[colNum]] : ''
+                        })
+                    }
+                    if (dateTime_index.length > 0) {
+                        function convertUtcToLocal(utcStr) {
+                            var utcDate = new Date(utcStr);
+
+                            let year = utcDate.getFullYear();
+                            let month = utcDate.toLocaleString('default', { month: 'short' });
+                            let day = utcDate.getDate();
+
+                            //let hours = utcDate.getHours();
+                            //let minutes = utcDate.getMinutes();
+                            //let seconds = utcDate.getSeconds();
+                            //let ampm = hours >= 12 ? 'PM' : 'AM';
+
+                            //hours = hours % 12;
+                            //hours = hours ? hours : 12; // the hour '0' should be '12'
+                            //minutes = minutes < 10 ? '0' + minutes : minutes;
+                            //seconds = seconds < 10 ? '0' + seconds : seconds;
+
+                            let strTime = day + '/' + month + '/' + year // + ' ' + hours + ':' + minutes + ':' + seconds + ' ' + ampm;
+                            return strTime;
+                        }
+                        dateTime_index.map(colNum => {
+                            row[colNum] = row[colNum] !== '' ? convertUtcToLocal([row[colNum]]) : ''
                         })
                     }
                 }
@@ -850,23 +915,28 @@
             let FielDataType_Mapping = EntityAttributes[table.name]["AttributeType"].map((field) => {
                 let fieldLogicalName = field[0]
                 let fieldAttributeType = field[1]
+                let fieldAdditionalInfo = field[2]
 
                 let fieldDisplayName = mappingArray.find(entry => entry[0] === fieldLogicalName)[1]
-                return [fieldLogicalName, fieldDisplayName, fieldAttributeType]
+                return [fieldLogicalName, fieldDisplayName, fieldAttributeType, fieldAdditionalInfo]
             })
             let tableHeaderColNames = table.columns.items.map(column => column.name)
             FielDataType_Mapping.forEach((field) => {
                 let fieldLogicalName = field[0]
                 let fieldDisplayName = field[1]
                 let fieldAttributeType = field[2]
+                let fieldAdditionalInfo = field[3]
 
                 let colIndex = tableHeaderColNames.indexOf(fieldDisplayName)
                 if (colIndex === -1) { return }
 
                 
-                
+                let minVal 
+                let maxVal
                 let colRange = table.columns.getItemAt(colIndex).getDataBodyRange()
+                let thisDataValidation = colRange.dataValidation
                 //colRange.dataValidation.clear()
+
                 switch (fieldAttributeType) {
                     case "Lookup": // data validation - List
                         let DropdownListSource
@@ -882,18 +952,18 @@
                         }
 
                         colRange.numberFormat = [["@"]]
-                        colRange.dataValidation.rule = {
+                        thisDataValidation.rule = {
                             list: {
                                 inCellDropDown: true,
                                 source: DropdownListSource
                             }
                         }
-                        colRange.dataValidation.prompt = {
+                        thisDataValidation.prompt = {
                             message: "Please choose an option from the list.",
                             showPrompt: true,
-                            title: "Selection Required"
+                            title: "Select an Option"
                         };
-                        colRange.dataValidation.errorAlert = {
+                        thisDataValidation.errorAlert = {
                             message: "This entry is not on the list. Please select a valid option from the dropdown.",
                             showAlert: true,
                             style: Excel.DataValidationAlertStyle.stop,
@@ -906,18 +976,18 @@
                             .join(",")  // Join the array into a comma-separated string
 
                         colRange.numberFormat = [["@"]]
-                        colRange.dataValidation.rule = {
+                        thisDataValidation.rule = {
                             list: {
                                 inCellDropDown: true,
                                 source: PickList 
                             }
                         }
-                        colRange.dataValidation.prompt = {
+                        thisDataValidation.prompt = {
                             message: "Please choose an option from the list.",
                             showPrompt: true,
-                            title: "Selection Required"
+                            title: "Select Option"
                         };
-                        colRange.dataValidation.errorAlert = {
+                        thisDataValidation.errorAlert = {
                             message: "This entry is not on the list. Please select a valid option from the dropdown.",
                             showAlert: true,
                             style: Excel.DataValidationAlertStyle.stop,
@@ -926,127 +996,176 @@
                         break
                     case "Boolean": // data validation - List
                         colRange.numberFormat = [["@"]]
-                        colRange.dataValidation.rule = {
+                        thisDataValidation.rule = {
                             list: {
                                 inCellDropDown: true,
                                 source: ['true', 'false'].join(",") // Join the array into a comma-separated string
                             }
                         }
-                        colRange.dataValidation.prompt = {
+                        thisDataValidation.prompt = {
                             message: "Please choose an option from the list.",
                             showPrompt: true,
-                            title: "Selection Required"
+                            title: "Select Option"
                         };
-                        colRange.dataValidation.errorAlert = {
+                        thisDataValidation.errorAlert = {
                             message: "This entry is not on the list. Please select a valid option from the dropdown.",
                             showAlert: true,
                             style: Excel.DataValidationAlertStyle.stop,
                             title: "Selection Error"
                         };
                         break
-                    case "DateTime": // long date 
-                        colRange.numberFormat = [["dd/mm/yyyy hh:mm:ss AM/PM"]]
-                        colRange.dataValidation.rule = {
+                    case "DateTime": // long date
+                        function convertUtcToLocal(utcStr) {
+                            var utcDate = new Date(utcStr);
+                            var excelMinDate = new Date('01/Jan/1900 00:00:00');
+
+                            // Check if the date is before the Excel min date (Jan 1, 1900)
+                            if (utcDate < excelMinDate) {
+                                utcDate = excelMinDate;
+                            }
+
+                            let year = utcDate.getFullYear();
+                            let month = utcDate.toLocaleString('default', { month: 'short' });
+                            let day = utcDate.getDate();
+
+                            let hours = utcDate.getHours();
+                            let minutes = utcDate.getMinutes();
+                            let seconds = utcDate.getSeconds();
+                            let ampm = hours >= 12 ? 'PM' : 'AM';
+
+                            hours = hours % 12;
+                            hours = hours ? hours : 12; // the hour '0' should be '12'
+                            minutes = minutes < 10 ? '0' + minutes : minutes;
+                            seconds = seconds < 10 ? '0' + seconds : seconds;
+
+                            let strTime = day + '/' + month + '/' + year + ' ' + hours + ':' + minutes + ':' + seconds + ' ' + ampm;
+                            return strTime;
+                        }
+                        let minDate = convertUtcToLocal(fieldAdditionalInfo["MinSupportedValue"])
+                        let maxDate = convertUtcToLocal(fieldAdditionalInfo["MaxSupportedValue"])
+
+                        colRange.numberFormat = [["dd/mm/yyyy"]]  // hh:mm:ss AM/PM
+                        thisDataValidation.rule = {
                             date: {
-                                operator: Excel.DataValidationOperator.greaterThanOrEqual,
-                                formula1: 0
+                                operator: Excel.DataValidationOperator.between,
+                                formula1: minDate,
+                                formula2: maxDate,
+                                ignoreBlanks: true
                             }
                         }
-                        colRange.dataValidation.prompt = {
-                            message: "Please enter a date in the format DD/MM/YYYY.",
+                        console.log(convertUtcToLocal(fieldAdditionalInfo["MinSupportedValue"]))
+                        thisDataValidation.prompt = {
+                            message: `Please enter a date (MM/DD/YYYY) which is between ${minDate} and ${maxDate}`,
                             showPrompt: true,
                             title: "Enter Date"
                         };
-                        colRange.dataValidation.errorAlert = {
-                            message: "Invalid entry. Please ensure the value is a date in the format MM/DD/YYYY.",
+                        thisDataValidation.errorAlert = {
+                            message: `Invalid entry. Please ensure the value is a date (MM/DD/YYYY) which is between ${fieldAdditionalInfo["MinSupportedValue"]} and ${fieldAdditionalInfo["MaxSupportedValue"]}.`,
                             showAlert: true,
                             style: Excel.DataValidationAlertStyle.stop,
                             title: "Invalid Date Format"
                         }
                         break
                     case "Decimal": // Number
+                        minVal = fieldAdditionalInfo["MinValue"]
+                        maxVal = fieldAdditionalInfo["MaxValue"]
+
                         colRange.numberFormat = [["#,##0.00"]]
-                        colRange.dataValidation.rule = {
+                        thisDataValidation.rule = {
                             decimal: {
                                 type: Excel.DataValidationType.decimal,
-                                operator: Excel.DataValidationOperator.greaterThanOrEqual,
-                                formula1: -9.999999999999e+253,
+                                operator: Excel.DataValidationOperator.between,
+                                formula1: fieldAdditionalInfo["MinValue"],
+                                formula2: fieldAdditionalInfo["MaxValue"],
                                 ignoreBlanks: true
                             }
                         }
-                        colRange.dataValidation.prompt = {
-                            message: "Please enter a decimal number (e.g., 123.45).",
+                        thisDataValidation.prompt = {
+                            message: `Please enter a decimal number which is between ${minVal} and ${maxVal}`,
                             showPrompt: true,
                             title: "Enter Decimal"
                         };
-                        colRange.dataValidation.errorAlert = {
-                            message: "Invalid entry. Please ensure the value is a decimal number (e.g., 123.45).",
+                        thisDataValidation.errorAlert = {
+                            message: `Invalid entry. Please ensure the value is a decimal number which is between ${minVal} and ${maxVal}.`,
                             showAlert: true,
                             style: Excel.DataValidationAlertStyle.stop,
                             title: "Invalid Decimal Format"
                         };
                         break
                     case "Double": // Number
+                        minVal = fieldAdditionalInfo["MinValue"]
+                        maxVal = fieldAdditionalInfo["MaxValue"]
+
                         colRange.numberFormat = [["#,##0.00"]]
-                        colRange.dataValidation.rule = {
+                        thisDataValidation.rule = {
                             decimal: {
                                 type: Excel.DataValidationType.decimal,
-                                operator: Excel.DataValidationOperator.greaterThanOrEqual,
-                                formula1: -9.999999999999e+253,
+                                operator: Excel.DataValidationOperator.between,
+                                formula1: fieldAdditionalInfo["MinValue"],
+                                formula2: fieldAdditionalInfo["MaxValue"],
                                 ignoreBlanks: true
                             }
                         }
-                        colRange.dataValidation.prompt = {
-                            message: "Please enter a decimal number (e.g., 123.45).",
+                        thisDataValidation.prompt = {
+                            message: `Please enter a decimal number which is between ${minVal} and ${maxVal}`,
                             showPrompt: true,
                             title: "Enter Decimal"
                         };
-                        colRange.dataValidation.errorAlert = {
-                            message: "Invalid entry. Please ensure the value is a decimal number (e.g., 123.45).",
+                        thisDataValidation.errorAlert = {
+                            message: `Invalid entry. Please ensure the value is a decimal number which is between ${minVal} and ${maxVal}.`,
                             showAlert: true,
                             style: Excel.DataValidationAlertStyle.stop,
                             title: "Invalid Decimal Format"
                         };
                         break
                     case "Integer": // data validation - List
+                        minVal = fieldAdditionalInfo["MinValue"]
+                        maxVal = fieldAdditionalInfo["MaxValue"]
+
                         colRange.numberFormat = [["#,##0"]]
-                        colRange.dataValidation.rule = {
-                            wholeNumber: {
-                                type: Excel.DataValidationType.wholeNumber,
-                                operator: Excel.DataValidationOperator.greaterThanOrEqual,
-                                formula1: -9.999999999999e+253,
+                        thisDataValidation.rule = {
+                            decimal: {
+                                type: Excel.DataValidationType.decimal,
+                                operator: Excel.DataValidationOperator.between,
+                                formula1: minVal,
+                                formula2: maxVal,
                                 ignoreBlanks: true
                             }
                         }
-                        colRange.dataValidation.prompt = {
-                            message: "Please enter a whole number.",
+                        
+                        thisDataValidation.prompt = {
+                            message: `Please enter a whole number which is between ${minVal} and ${maxVal}`,
                             showPrompt: true,
-                            title: "Enter Whole Number"
+                            title: "Enter Integer"
                         };
-                        range.dataValidation.errorAlert = {
-                            message: "Invalid entry. Please ensure the value is a whole number.",
+                        thisDataValidation.errorAlert = {
+                            message: `Invalid entry. Please ensure the value is a whole number which is between ${minVal} and ${maxVal}.`,
                             showAlert: true,
                             style: Excel.DataValidationAlertStyle.stop,
-                            title: "Invalid Whole Number"
+                            title: "Invalid Integer Format"
                         };
                         break
                     case "Money": // Currency
+                        minVal = fieldAdditionalInfo["MinValue"]
+                        maxVal = fieldAdditionalInfo["MaxValue"]
+
                         colRange.numberFormat = [["$#,##0.00;[Red]-$#,##0.00"]]
-                        colRange.dataValidation.rule = {
+                        thisDataValidation.rule = {
                             decimal: {
                                 type: Excel.DataValidationType.decimal,
-                                operator: Excel.DataValidationOperator.greaterThanOrEqual,
-                                formula1: -9.999999999999e+253,
+                                operator: Excel.DataValidationOperator.between,
+                                formula1: fieldAdditionalInfo["MinValue"],
+                                formula2: fieldAdditionalInfo["MaxValue"],
                                 ignoreBlanks: true
                             }
                         }
-                        colRange.dataValidation.prompt = {
-                            message: "Please enter a decimal number (e.g., 123.45).",
+                        thisDataValidation.prompt = {
+                            message: `Please enter a decimal number which is between ${minVal} and ${maxVal}`,
                             showPrompt: true,
                             title: "Enter Decimal"
                         };
-                        colRange.dataValidation.errorAlert = {
-                            message: "Invalid entry. Please ensure the value is a decimal number (e.g., 123.45).",
+                        thisDataValidation.errorAlert = {
+                            message: `Invalid entry. Please ensure the value is a decimal number which is between ${minVal} and ${maxVal}.`,
                             showAlert: true,
                             style: Excel.DataValidationAlertStyle.stop,
                             title: "Invalid Decimal Format"
@@ -1054,22 +1173,21 @@
                         break
                     case "String": // Text
                         colRange.numberFormat = [["@"]]
-                        colRange.dataValidation.rule = {
+                        thisDataValidation.rule = {
                             textLength: {
                                 type: Excel.DataValidationType.textLength,
-                                operator: Excel.DataValidationOperator.between,
-                                formula1: 23,
-                                formula2: 67,
+                                operator: Excel.DataValidationOperator.lessThanOrEqualTo,
+                                formula1: fieldAdditionalInfo["MaxLength"],
                                 ignoreBlanks: true
                             }
                         };
-                        colRange.dataValidation.prompt = {
-                            message: "Please enter a text between 23 and 67 characters.",
+                        thisDataValidation.prompt = {
+                            message: `Please enter a text whose length is not more than ${fieldAdditionalInfo["MaxLength"]} characters.`,
                             showPrompt: true,
-                            title: "Required Text Length"
+                            title: "Enter Text"
                         };
-                        colRange.dataValidation.errorAlert = {
-                            message: "The text entered does not meet the length requirements. It must be between 23 and 67 characters.",
+                        thisDataValidation.errorAlert = {
+                            message: `The text entered does not meet the length requirements. It must be less than or equal to ${fieldAdditionalInfo["MaxLength"]} characters.`,
                             showAlert: true,
                             style: Excel.DataValidationAlertStyle.stop,
                             title: "Text Length Error"
@@ -1077,22 +1195,21 @@
                         break
                     case "Memo": // Text
                         colRange.numberFormat = [["@"]]
-                        colRange.dataValidation.rule = {
+                        thisDataValidation.rule = {
                             textLength: {
                                 type: Excel.DataValidationType.textLength,
-                                operator: Excel.DataValidationOperator.between,
-                                formula1: 23,
-                                formula2: 67,
+                                operator: Excel.DataValidationOperator.lessThanOrEqualTo,
+                                formula1: fieldAdditionalInfo["MaxLength"],
                                 ignoreBlanks: true
                             }
                         };
-                        colRange.dataValidation.prompt = {
-                            message: "Please enter a text between 23 and 67 characters.",
+                        thisDataValidation.prompt = {
+                            message: `Please enter a text whose length is not more than ${fieldAdditionalInfo["MaxLength"]} characters.`,
                             showPrompt: true,
-                            title: "Required Text Length"
+                            title: "Enter Text"
                         };
-                        colRange.dataValidation.errorAlert = {
-                            message: "The text entered does not meet the length requirements. It must be between 23 and 67 characters.",
+                        thisDataValidation.errorAlert = {
+                            message: `The text entered does not meet the length requirements. It must be less than or equal to ${fieldAdditionalInfo["MaxLength"]} characters.`,
                             showAlert: true,
                             style: Excel.DataValidationAlertStyle.stop,
                             title: "Text Length Error"
@@ -1100,18 +1217,18 @@
                         break
                     case "Status": // data validation  - List
                         colRange.numberFormat = [["@"]]
-                        colRange.dataValidation.rule = {
+                        thisDataValidation.rule = {
                             list: {
                                 inCellDropDown: true,
-                                source: [1, 2, 3].join(",") // Join the array into a comma-separated string
+                                source: ['Not', 'been', 'done'].join(",") // Join the array into a comma-separated string
                             }
                         }
-                        colRange.dataValidation.prompt = {
+                        thisDataValidation.prompt = {
                             message: "Please choose an option from the list.",
                             showPrompt: true,
-                            title: "Selection Required"
+                            title: "Select an Option"
                         };
-                        colRange.dataValidation.errorAlert = {
+                        thisDataValidation.errorAlert = {
                             message: "This entry is not on the list. Please select a valid option from the dropdown.",
                             showAlert: true,
                             style: Excel.DataValidationAlertStyle.stop,
@@ -1120,18 +1237,18 @@
                         break
                     case "State": // data validation - List
                         colRange.numberFormat = [["@"]]
-                        colRange.dataValidation.rule = {
+                        thisDataValidation.rule = {
                             list: {
                                 inCellDropDown: true,
-                                source: [1, 2, 3].join(",") // Join the array into a comma-separated string
+                                source: ['Not', 'been', 'done'].join(",") // Join the array into a comma-separated string
                             }
                         }
-                        colRange.dataValidation.prompt = {
+                        thisDataValidation.prompt = {
                             message: "Please choose an option from the list.",
                             showPrompt: true,
-                            title: "Selection Required"
+                            title: "Select an Option"
                         };
-                        colRange.dataValidation.errorAlert = {
+                        thisDataValidation.errorAlert = {
                             message: "This entry is not on the list. Please select a valid option from the dropdown.",
                             showAlert: true,
                             style: Excel.DataValidationAlertStyle.stop,
@@ -1265,37 +1382,20 @@
 
                 if (jsonObj["value"] && jsonObj["value"].length > 0) {
                     for (let fieldName in jsonObj["value"][0]) {
-                        //if (typeof jsonObj["value"][0][fieldName] === "object" && jsonObj["value"][0][fieldName] != null) {
-                        //    for (let relatedField in jsonObj["value"][0][fieldName]) {
-                        //        let expandedFieldName = `${fieldName} / ${relatedField}`;
-                        //        headers.push(expandedFieldName);
-                        //    }
-                        //} else {
-                        //    headers.push(fieldName);
-                        //}
                         headers.push(fieldName)
                     }
 
                     tempArr_5k = [headers];
 
                     jsonObj["value"].forEach((row) => {
-                        let itemWithRelatedFields = {};
+                        let tempDict = {};
 
                         for (let cell in row) {
-                            //if (typeof row[cell] === "object" && row[cell] !== null) {
-                            //    for (let field in row[cell]) {
-                            //        let relatedFieldName = `${cell} / ${field}`;
-                            //        itemWithRelatedFields[relatedFieldName] = row[cell][field];
-                            //    }
-                            //} else {
-                            //    itemWithRelatedFields[cell] = row[cell];
-                            //}
-
-                            itemWithRelatedFields[cell] = row[cell];
+                            tempDict[cell] = row[cell];
                         }
 
                         let tempValRow = headers.map((header) => {
-                            return itemWithRelatedFields[header] || null;
+                            return tempDict[header] || '';
                         });
 
                         tempArr_5k.push(tempValRow);
