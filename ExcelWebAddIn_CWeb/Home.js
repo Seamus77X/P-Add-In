@@ -669,7 +669,9 @@
                                                     // Paste the updated data into Excel
                                                     let startRow = parseInt(dataBodyRange.address.split("!")[1].match(/\d+/), 10);
                                                     let newEndRow = startRow + dropDownList.length - 1;
-                                                    let newRangeAddress = dataBodyRange.address.split("!")[1].replace(/\d+$/, newEndRow);
+                                                    let newRangeAddress = dataBodyRange.address.split("!")[1].replace(/\d+$/, newEndRow).replace(/([A-Z]+)(\d+)/g, function (match, p1, p2) {
+                                                        return `$${p1}$${p2}`;
+                                                    });
 
                                                     DropdownListAddress = `${dataBodyRange.address.split("!")[0]}!${newRangeAddress}`
 
@@ -711,9 +713,9 @@
                                                 let newTableEndRow = dropDownList.length + 1;
                                                 let newTableColumn = columnNumberToName(usedRange.columnCount + 1)
                                                 let newTableAddress = `${newTableColumn}1:${newTableColumn}${newTableEndRow}`;
-                                                let dataBodyRange = `${newTableColumn}2:${newTableColumn}${newTableEndRow}`;
+                                                let dataBodyRangeAddress = '$' + newTableColumn + '$2:$' + newTableColumn + '$' + newTableEndRow;
 
-                                                DropdownListAddress = 'Lookup!' + dataBodyRange
+                                                DropdownListAddress = 'Lookup!' + dataBodyRangeAddress
 
                                                 // Set the values and add a new table at the calculated address
                                                 let tablRange = lookupSheet.getRange(newTableAddress)
@@ -1044,7 +1046,7 @@
                         let minDate = convertUtcToLocal(fieldAdditionalInfo["MinSupportedValue"])
                         let maxDate = convertUtcToLocal(fieldAdditionalInfo["MaxSupportedValue"])
 
-                        colRange.numberFormat = [["dd/mm/yyyy"]]  // hh:mm:ss AM/PM
+                        colRange.numberFormat = [["dd mmm yyyy"]]  // hh:mm:ss AM/PM
                         thisDataValidation.rule = {
                             date: {
                                 operator: Excel.DataValidationOperator.between,
@@ -1614,10 +1616,70 @@
             let jsonPayLoad = {};
             for (let c = startCol; c <= endCol; c++) {
                 let displayColName = thisTableData[0][c];
-                let mappingEntry = pp_eacb_fieldNameMapping[thisTableName].find(entry => entry[1] === displayColName);
-                if (mappingEntry) {
-                    let logicalColName = mappingEntry[0];
-                    jsonPayLoad[logicalColName] = thisTableData[r][c];
+                let logicalColName = pp_eacb_fieldNameMapping[thisTableName].find(entry => entry[1] === displayColName)[0];
+                if (logicalColName) {
+                    let attributeType = EntityAttributes[thisTableName]['AttributeType'].find(entry => entry[0] === logicalColName)[1];
+                    let thisData = thisTableData[r][c]
+
+                    if (attributeType === 'Lookup') {
+                        let ReferencedEntitySetName = EntityAttributes[thisTableName]['LookupRelationship'][logicalColName]['ReferencedEntitySetName']
+                        let ReferencingEntityNavigationPropertyName = EntityAttributes[thisTableName]['LookupRelationship'][logicalColName]['ReferencingEntityNavigationPropertyName']
+
+                        if (thisData === '') {
+                            thisData = null
+                        } else {
+                            let optionIndex = thisData.match(/^\d+/)
+                            let referencedGUID = EntityAttributes[thisTableName]['LookupRelationship'][logicalColName]['ReferencedEntityData'][optionIndex][1]
+                            thisData = `/${ReferencedEntitySetName}(${referencedGUID})`
+                        }
+                        logicalColName = `${ReferencingEntityNavigationPropertyName}@odata.bind`
+                    } else if (attributeType === 'Picklist') {
+                        if (thisData === '') {
+                            thisData = null
+                        } else {
+                            let optionIndex = thisData.match(/^\d+/)
+                            let referencedOptionVal = EntityAttributes[thisTableName]['PickLists'][logicalColName][optionIndex][1]
+                            thisData = referencedOptionVal
+                        }
+                    } else if (attributeType === 'Boolean') {
+
+                    } else if (attributeType === 'DateTime') {
+                        if (thisData === '') {
+                            thisData = null
+                        } else {
+                            function excelSerialDateToISO8601(serial) {
+                                var baseDate = new Date(1899, 11, 31); // Set the base date as December 31, 1899
+                                var days = serial - (serial > 60 ? 1 : 0); // Adjust for the 1900 leap year bug in Excel
+
+                                // Calculate the date by adding the days to the base date
+                                var utcDate = new Date(baseDate.getTime() + days * 86400000);
+
+                                // Convert to ISO 8601 format and trim milliseconds
+                                var isoDate = utcDate.toISOString();
+                                return isoDate.substring(0, isoDate.length - 5) + 'Z';
+                            }
+
+                            let localDate = excelSerialDateToISO8601(parseInt(thisData, 10))
+
+                            // Convert to ISO 8601 format in UTC
+                            let iso8601Date = localDate;
+                            thisData = iso8601Date
+                        }
+                    } else if (attributeType === 'Double' || attributeType === 'Decimal' || attributeType === 'Money') {
+                        thisData = thisData === '' ? null : parseFloat(thisData)
+                    } else if (attributeType === 'Integer') {
+                        thisData = thisData === '' ? null : parseInt(thisData, 10)
+                    } else if (attributeType === 'String' || attributeType === 'Memo') {
+                        thisData = thisData.toString()
+                    } else if (Status) {
+
+                    } else if (State) {
+
+                    } else if (Uniqueidentifier) {
+
+                    }
+
+                    jsonPayLoad[logicalColName] = thisData;
                 }
             }
 
@@ -1666,10 +1728,76 @@
             for (let c = startCol; c <= endCol; c++) {
                 let displayColName = thisTableData[0][c];
                 // Use pp_eacb_fieldNameMapping for converting display names to logical names.
-                let mappingEntry = pp_eacb_fieldNameMapping[thisTableName].find(entry => entry[1] === displayColName);
-                if (mappingEntry) {
-                    let logicalColName = mappingEntry[0];
-                    jsonPayLoad[logicalColName] = thisTableData[r][c];
+                let logicalColName = pp_eacb_fieldNameMapping[thisTableName].find(entry => entry[1] === displayColName)[0];
+                if (logicalColName) {
+                    let attributeType = EntityAttributes[thisTableName]['AttributeType'].find(entry => entry[0] === logicalColName)[1];
+                    let thisData = thisTableData[r][c]
+
+
+                    if (attributeType === 'Lookup') {
+                        let ReferencedEntitySetName = EntityAttributes[thisTableName]['LookupRelationship'][logicalColName]['ReferencedEntitySetName']
+                        let ReferencingEntityNavigationPropertyName = EntityAttributes[thisTableName]['LookupRelationship'][logicalColName]['ReferencingEntityNavigationPropertyName']
+
+                        if (thisData === '') {
+                            thisData = null 
+                        } else {
+                            let optionIndex = thisData.match(/^\d+/)
+                            let referencedGUID = EntityAttributes[thisTableName]['LookupRelationship'][logicalColName]['ReferencedEntityData'][optionIndex][1]
+                            thisData = `/${ReferencedEntitySetName}(${referencedGUID})`
+                        }
+                        logicalColName = `${ReferencingEntityNavigationPropertyName}@odata.bind`
+                    } else if (attributeType === 'Picklist') {
+                        if (thisData === '') {
+                            thisData = null 
+                        } else {
+                            let optionIndex = thisData.match(/^\d+/)
+                            let referencedOptionVal = EntityAttributes[thisTableName]['PickLists'][logicalColName][optionIndex][1]
+                            thisData = referencedOptionVal
+                        }
+                    } else if (attributeType === 'Boolean') {
+
+                    } else if (attributeType === 'DateTime') {
+                        if (thisData === '') {
+                            thisData = null
+                        } else {
+                            function excelSerialDateToISO8601(serial) {
+                                var baseDate = new Date(1899, 11, 31); // Set the base date as December 31, 1899
+                                var days = serial - (serial > 60 ? 1 : 0); // Adjust for the 1900 leap year bug in Excel
+
+                                // Calculate the date by adding the days to the base date
+                                var utcDate = new Date(baseDate.getTime() + days * 86400000);
+
+                                // Convert to ISO 8601 format and trim milliseconds
+                                var isoDate = utcDate.toISOString();
+                                return isoDate.substring(0, isoDate.length - 5) + 'Z';
+                            }
+
+                            let localDate = excelSerialDateToISO8601(parseInt(thisData, 10))
+
+                            // Convert to ISO 8601 format in UTC
+                            let iso8601Date = localDate;
+                            thisData = iso8601Date
+                        }
+                    } else if (attributeType === 'Double' || attributeType === 'Decimal' || attributeType === 'Money') {
+                        thisData = thisData === '' ? null : parseFloat(thisData)
+                    } else if (attributeType === 'Integer') {
+                        thisData = thisData === '' ? null : parseInt(thisData, 10)
+                    } else if (attributeType === 'String' || attributeType === 'Memo') {
+                        thisData = thisData.toString()
+                    } else if (Status) {
+
+                    } else if (State) {
+
+                    } else if (Uniqueidentifier) {
+
+                    }
+
+
+
+
+
+
+                    jsonPayLoad[logicalColName] = thisData
                 }
             }
 
