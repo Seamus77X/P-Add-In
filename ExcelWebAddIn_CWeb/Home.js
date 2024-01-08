@@ -27,7 +27,10 @@
             ["sc_riskdescription", "Description"],
             ["sc_riskoropportunity", "Risk_Opportunity"],
             ["_sc_wbs_value", "WBS"],
-            ["_sensei_riskowner_value", "Owner"]
+            ["_sensei_riskowner_value", "Owner"],
+            ["sc_cause", 'Cause (Facts)\n\"Due to….\"'],
+            ["sc_contingencyimpactminimum", "Min ($)"],
+            ["sc_contingencylikelihood","Likelihood\n(A)"]
         ],
         'sc_variations': [
             ["sc_variationstatus", "Status"],
@@ -240,12 +243,12 @@
                 //////////////////////////////////////////////////
                 Office.actions.associate("buttonFunction", function (event) {
                     console.log('Hey, you just pressed a ribbon button.')
-                    //Create_D365('sensei_lessonslearned', { 'sensei_category': '100000001', 'sc_Discipline@odata.bind': '/sc_disciplines(0f49df58-4d91-ec11-8d20-00224815a133)' }, EntityAttributes['sensei_lessonslearned']["PrimaryID"])
+                    Create_D365('sensei_risks', {"sc_riskdescription": 'sasa'}, 'sensei_riskid')
 
                     console.log(pp_eacb_rowIdMapping)
                     console.log(EntityAttributes)
 
-                    let a = Read_D365("https://gsis-pmo-australia-sensei-demo.crm6.dynamics.com/api/data/v9.2/EntityDefinitions(LogicalName='sensei_lessonlearned')/Attributes?$filter=LogicalName eq 'sensei_name' or LogicalName eq 'importsequencenumber'")
+                    let a = Read_D365("https://gsis-pmo-australia-sensei-dev.api.crm6.dynamics.com/api/data/v9.1/EntityDefinitions(LogicalName='sensei_risk')/Attributes?$filter=LogicalName%20eq%20%27sc_contingencylikelihood%27")
                     console.log(a)
 
                     event.completed();
@@ -806,13 +809,13 @@
                             picklistField_index.push(colNum)
 
                             let tempDict = {}
-                            picklist[header].map(option => tempDict[option[1]] = option[0])
+                            picklist[header].map((option, index) => tempDict[option[1]] = `${index + 1}. ${option[0]}`)
                             picklist_Dict[colNum] = tempDict
                         } else if (lookupInfo[header]) {
                             lookupField_index.push(colNum)
 
                             let tempDict = {}
-                            lookupInfo[header]['ReferencedEntityData'].map(option => tempDict[option[1]] = option[0])
+                            lookupInfo[header]['ReferencedEntityData'].map((option, index) => tempDict[option[1]] = `${index + 1}. ${option[0]}`)
                             lookupList_Dict[colNum] = tempDict
                         } else if (dateTimeColl.includes(header)) {
                             dateTime_index.push(colNum)
@@ -1055,7 +1058,7 @@
                                 ignoreBlanks: true
                             }
                         }
-                        console.log(convertUtcToLocal(fieldAdditionalInfo["MinSupportedValue"]))
+
                         thisDataValidation.prompt = {
                             message: `Please enter a date (MM/DD/YYYY) which is between ${minDate} and ${maxDate}`,
                             showPrompt: true,
@@ -1397,7 +1400,7 @@
                         }
 
                         let tempValRow = headers.map((header) => {
-                            return tempDict[header] || '';
+                            return tempDict[header];
                         });
 
                         tempArr_5k.push(tempValRow);
@@ -1616,7 +1619,8 @@
             let jsonPayLoad = {};
             for (let c = startCol; c <= endCol; c++) {
                 let displayColName = thisTableData[0][c];
-                let logicalColName = pp_eacb_fieldNameMapping[thisTableName].find(entry => entry[1] === displayColName)[0];
+                let matchedEntry = pp_eacb_fieldNameMapping[thisTableName].find(entry => entry[1] === displayColName)
+                let logicalColName = matchedEntry === undefined ? undefined : matchedEntry[0];
                 if (logicalColName) {
                     let attributeType = EntityAttributes[thisTableName]['AttributeType'].find(entry => entry[0] === logicalColName)[1];
                     let thisData = thisTableData[r][c]
@@ -1628,7 +1632,7 @@
                         if (thisData === '') {
                             thisData = null
                         } else {
-                            let optionIndex = thisData.match(/^\d+/)
+                            let optionIndex = thisData.match(/^\d+/) - 1
                             let referencedGUID = EntityAttributes[thisTableName]['LookupRelationship'][logicalColName]['ReferencedEntityData'][optionIndex][1]
                             thisData = `/${ReferencedEntitySetName}(${referencedGUID})`
                         }
@@ -1637,7 +1641,7 @@
                         if (thisData === '') {
                             thisData = null
                         } else {
-                            let optionIndex = thisData.match(/^\d+/)
+                            let optionIndex = thisData.match(/^\d+/) - 1
                             let referencedOptionVal = EntityAttributes[thisTableName]['PickLists'][logicalColName][optionIndex][1]
                             thisData = referencedOptionVal
                         }
@@ -1728,7 +1732,8 @@
             for (let c = startCol; c <= endCol; c++) {
                 let displayColName = thisTableData[0][c];
                 // Use pp_eacb_fieldNameMapping for converting display names to logical names.
-                let logicalColName = pp_eacb_fieldNameMapping[thisTableName].find(entry => entry[1] === displayColName)[0];
+                let matchedEntry = pp_eacb_fieldNameMapping[thisTableName].find(entry => entry[1] === displayColName)
+                let logicalColName = matchedEntry === undefined ? undefined : matchedEntry[0];
                 if (logicalColName) {
                     let attributeType = EntityAttributes[thisTableName]['AttributeType'].find(entry => entry[0] === logicalColName)[1];
                     let thisData = thisTableData[r][c]
@@ -1741,7 +1746,7 @@
                         if (thisData === '') {
                             thisData = null 
                         } else {
-                            let optionIndex = thisData.match(/^\d+/)
+                            let optionIndex = thisData.match(/^\d+/) - 1
                             let referencedGUID = EntityAttributes[thisTableName]['LookupRelationship'][logicalColName]['ReferencedEntityData'][optionIndex][1]
                             thisData = `/${ReferencedEntitySetName}(${referencedGUID})`
                         }
@@ -1750,7 +1755,7 @@
                         if (thisData === '') {
                             thisData = null 
                         } else {
-                            let optionIndex = thisData.match(/^\d+/)
+                            let optionIndex = thisData.match(/^\d+/) - 1
                             let referencedOptionVal = EntityAttributes[thisTableName]['PickLists'][logicalColName][optionIndex][1]
                             thisData = referencedOptionVal
                         }
