@@ -248,7 +248,7 @@
                     console.log(pp_eacb_rowIdMapping)
                     console.log(EntityAttributes)
 
-                    let a = Read_D365("https://gsis-pmo-australia-sensei-dev.api.crm6.dynamics.com/api/data/v9.1/EntityDefinitions(LogicalName='sensei_risk')/Attributes?$filter=LogicalName%20eq%20%27sc_contingencylikelihood%27")
+                    let a = Read_D365("https://gsis-pmo-australia-sensei-demo.api.crm6.dynamics.com/api/data/v9.1/isa_addinmappingtables")
                     console.log(a)
 
                     event.completed();
